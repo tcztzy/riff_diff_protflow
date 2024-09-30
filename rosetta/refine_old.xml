@@ -1,0 +1,79 @@
+<ROSETTASCRIPTS>
+	<SCOREFXNS>
+		<ScoreFunction name="beta_cst" weights="beta_cst" >
+			<Reweight scoretype="atom_pair_constraint" weight="1"/>
+			<Reweight scoretype="angle_constraint" weight="1"/>
+			<Reweight scoretype="dihedral_constraint" weight="1"/>
+			<Reweight scoretype="coordinate_constraint" weight="1" />
+		</ScoreFunction>
+		<ScoreFunction name="r15_blank" weights="ref2015" />
+	</SCOREFXNS>
+	<RESIDUE_SELECTORS>
+		<Index name="motif" resnums="%%motif_res%%" />
+		<Index name="catres" resnums="%%cat_res%%" />
+		<Layer name="surface" select_core="false" select_boundary="false" select_surface="true" />
+		<Neighborhood name="catres_neighbors_designable" selector="catres" distance="5" include_focus_in_subset="false" />
+		<Neighborhood name="catres_neighbors_packable" selector="catres" distance="10" include_focus_in_subset="true" />
+		<Not name="no_pack_res" selector="catres_neighbors_packable" />
+		<Not name="no_design_res" selector="catres_neighbors_designable" />
+		<Or name="mpnn_fixedres" selectors="catres,catres_neighbors_designable"/>
+	</RESIDUE_SELECTORS>
+	<SIMPLE_METRICS>
+	</SIMPLE_METRICS>
+	<FILTERS>
+	</FILTERS>
+	<TASKOPERATIONS>
+		<OperateOnResidueSubset name="restrict_surface_to_repacking" selector="surface" >
+			<RestrictToRepackingRLT />
+		</OperateOnResidueSubset>
+		<OperateOnResidueSubset name="restrict_catres_to_repacking" selector="catres" >
+			<RestrictToRepackingRLT />
+		</OperateOnResidueSubset>
+		<OperateOnResidueSubset name="prevent_noncatres_repacking" selector="no_pack_res" >
+			<PreventRepackingRLT />
+		</OperateOnResidueSubset>
+		<OperateOnResidueSubset name="prevent_design" selector="no_design_res" >
+			<RestrictToRepackingRLT />
+		</OperateOnResidueSubset>
+		<ExtraRotamersGeneric name="extrachi" ex1="1" ex2="1" ex1aro="1" ex2aro="1" extrachi_cutoff="0" />
+		<IncludeCurrent name="current_rot" />
+	</TASKOPERATIONS>
+	<MOVERS>
+		<PyMOLMover name="pmm" keep_history="1" />
+		<VirtualRoot name="set_virtual_root" />
+		<AddConstraints name="add_ca_motif_cst" >
+			<CoordinateConstraintGenerator name="set_ca_motif_constraint" residue_selector="motif" native="true" ca_only="true" align_reference="true" />
+		</AddConstraints>
+		<AddConstraints name="add_cat_res_cst" >
+			<CoordinateConstraintGenerator name="set_cat_res_constraint" residue_selector="catres" native="true" sidechain="true" align_reference="true" />
+		</AddConstraints>
+		<FastDesign name="fastdesign_cst" scorefxn="beta_cst" task_operations="restrict_surface_to_repacking,restrict_catres_to_repacking" />
+		<PackRotamersMover name="pack_catres" scorefxn="beta_cst" nloop="25" task_operations="prevent_noncatres_repacking,prevent_design" />
+		<MinMover name="catres_min" jump="0" chi="0" bb="0" scorefxn="beta_cst" >
+			<MoveMap name="mm1" bb="0" chi="0" jump="0" >
+				<ResidueSelector selector="mpnn_fixedres" chi="1" bb="1" />
+			</MoveMap>
+		</MinMover>
+		<ParsedProtocol name="catres_repack_redes" mode="sequence" >
+			<Add mover_name="pack_catres" />
+			<Add mover_name="pmm" />
+			<Add mover_name="catres_min" />
+			<Add mover_name="pmm" />
+		</ParsedProtocol>
+		<GenericMonteCarlo name="mc_packmin" mover_name="catres_repack_redes" trials="10" sample_type="low" temperature="1" drift="1" preapply="1" />
+	</MOVERS>
+	<APPLY_TO_POSE>
+	</APPLY_TO_POSE>
+	<PROTOCOLS>
+		<Add mover_name="pmm" />
+		<Add mover_name="set_virtual_root" />
+		<Add mover_name="pmm" />
+		<Add mover_name="add_ca_motif_cst" />
+		<Add mover_name="add_cat_res_cst" />
+		<Add mover_name="pmm" />
+		<Add mover_name="fastdesign_cst" />
+		<Add mover_name="pmm" />
+		<Add mover_name="mc_packmin" />
+	</PROTOCOLS>
+	<OUTPUT scorefxn="beta_cst" />
+  /</ROSETTASCRIPTS>

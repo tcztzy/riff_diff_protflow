@@ -1,0 +1,62 @@
+<ROSETTASCRIPTS>
+	<SCOREFXNS>
+		<ScoreFunction name="beta" weights="beta" >
+			<Reweight scoretype="coordinate_constraint" weight="1"/>
+		</ScoreFunction>
+	</SCOREFXNS>
+	<RESIDUE_SELECTORS>
+		<Index name="catres" resnums="%%cat_res%%" />
+		<Index name="motif" resnums="%%motif_res%%" />
+		<Not name="ligand" >
+			<ResiduePropertySelector properties="CANONICAL_AA" />
+		</Not>
+		<Or name="catres_lig" selectors="catres,ligand" />
+		<Not name="all_but_motif" selector="motif" />
+		<Not name="all_but_catres" selector="catres" />
+		<Not name="fixed_res" >
+			<And >
+				<ResidueName residue_name3="%%prohibited_residues%%" />
+				<Not selector="catres" />
+			</And>
+		</Not>
+	</RESIDUE_SELECTORS>
+	<SIMPLE_METRICS>
+	</SIMPLE_METRICS>
+	<RESIDUE_LEVEL_TASK_OPERATIONS>
+		<PreventRepackingRLT name="PreventRepacking" />
+	</RESIDUE_LEVEL_TASK_OPERATIONS>
+	<TASKOPERATIONS>
+		<DesignRestrictions name="design_task">
+			<Action residue_selector="fixed_res" residue_level_operations="PreventRepacking"/>
+		</DesignRestrictions>
+		<LimitAromaChi2 name="arolimit" chi2max="110" chi2min="70" include_trp="true" />
+		<ExtraRotamersGeneric name="extrachi" ex1="1" ex2="1" extrachi_cutoff="0" />
+		<InitializeFromCommandline name="initialize" />
+		<IncludeCurrent name="current_rot" />
+		<ProhibitSpecifiedBaseResidueTypes name="prohibit_res" base_types="%%prohibited_residues%%" selector="all_but_catres" />
+		<ReadResfile name="read_resfile" filename="%%resfilepath%%" />
+		ResfileCommandOperation name="remove_prohibited" command="PIKAA ALLAA" residue_selector="select_prohibited_res" />
+	</TASKOPERATIONS>
+	<FILTERS>
+	</FILTERS>
+	<MOVERS>
+		<PackRotamersMover name="remove_prohibited_residues" task_operations="prohibit_res,design_task,extrachi" />
+		<VirtualRoot name="set_virtual_root" />
+		<FastDesign name="relax" scorefxn="beta" task_operations="prohibit_res,read_resfile,arolimit,initialize,current_rot,extrachi"/>
+		<AddConstraints name="add_cst" >
+			<CoordinateConstraintGenerator name="set_bb_motif_constraint" residue_selector="motif" native="true" ca_only="false" align_reference="true" sd="0.1"/>
+			<CoordinateConstraintGenerator name="set_bb_ca_constraint" native="false" ca_only="true" sd="1"/>
+			<CoordinateConstraintGenerator name="set_cat_res_constraint" residue_selector="catres" native="true" sidechain="true" align_reference="true" sd="0.1" />
+			<CoordinateConstraintGenerator name="set_substrate_constraint" residue_selector="ligand" native="false" sidechain="true" sd="0.1" />
+		</AddConstraints>
+	</MOVERS>
+	<APPLY_TO_POSE>
+	</APPLY_TO_POSE>
+	<PROTOCOLS>
+		<Add mover="set_virtual_root" />
+		<Add mover="add_cst" />
+		<Add mover="remove_prohibited_residues" />
+		<Add mover="relax" />
+	</PROTOCOLS>
+	<OUTPUT scorefxn="beta" />
+  /</ROSETTASCRIPTS>

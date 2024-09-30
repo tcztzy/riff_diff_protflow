@@ -1,0 +1,50 @@
+<ROSETTASCRIPTS>
+	This Script is the prototype to dock Ligands into the PylRS binding pocket using GALigandDock.
+	IMPORTANT: when running, add the flag -beta to the command-line.
+	<SCOREFXNS>
+		<ScoreFunction name="beta_genpot" weights="beta_genpot"/> 
+		<ScoreFunction name="beta" weights="beta"/>
+		<ScoreFunction name="dockscore" weights="beta">
+    			<Reweight scoretype="fa_rep" weight="0.2"/>
+    			<Reweight scoretype="coordinate_constraint" weight="0.1"/>
+  		</ScoreFunction>
+		<ScoreFunction name="relaxscore" weights="beta_cart"/>
+		<ScoreFunction name="beta_nov16" weights="beta" />
+                <ScoreFunction name="beta_cst" weights="beta_cst" />
+	</SCOREFXNS>
+	<RESIDUE_SELECTORS>
+		<Chain name="ligchain" chains="%%ligchain%%"/>
+		<Layer name="surface" select_surface="true" />
+                <Chain name="prot" chains="A" />
+	</RESIDUE_SELECTORS>
+	<JUMP_SELECTORS>
+      		<JumpIndex name="jump1" jump="1"/>
+  	</JUMP_SELECTORS>
+	<PACKER_PALETTES>
+	</PACKER_PALETTES>
+	<TASKOPERATIONS>
+	</TASKOPERATIONS>
+	<MOVE_MAP_FACTORIES>
+	</MOVE_MAP_FACTORIES>
+	<SIMPLE_METRICS>
+		<SapScoreMetric name="sapscore" />
+                <SelectedResidueCountMetric name="core_res_count" custom_type="core" residue_selector="NOT surface" />
+                <SelectedResidueCountMetric name="total_res_count" custom_type="all" residue_selector="prot" />
+                <TotalEnergyMetric name="core_interaction_fa_atr" residue_selector="NOT surface" scoretype="fa_atr" scorefxn="beta" />
+	</SIMPLE_METRICS>
+	<FILTERS>
+	        <AtomicContactCount name="contacts" confidence="0"/> atomic density (c-c contacts) from fleishman paper
+	</FILTERS>
+	<MOVERS>
+                <RunSimpleMetrics name="calc_proteinscores" metrics="sapscore,core_interaction_fa_atr,core_res_count,total_res_count" />
+		<PyMOLMover name="pmm" keep_history="1" />
+		<GALigandDock name="dock" runmode="VSH" scorefxn="dockscore" scorefxn_relax="relaxscore" nativepdb="%%native%%" />
+		<InterfaceScoreCalculator name="RMSD_IF_energy" chains="A,%%ligchain%%" scorefxn="beta_genpot" />
+	</MOVERS>
+	<PROTOCOLS>
+		<Add mover_name="dock" />
+		<Add mover_name="RMSD_IF_energy" />
+		<Add mover_name="calc_proteinscores" />
+	</PROTOCOLS>
+	<OUTPUT scorefxn="beta" />
+</ROSETTASCRIPTS>
