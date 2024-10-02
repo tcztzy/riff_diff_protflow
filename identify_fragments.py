@@ -1,5 +1,3 @@
-#!/home/tripp/mambaforge/envs/protflow_new/bin/python
-
 import logging
 import os
 import sys
@@ -17,7 +15,6 @@ import time
 import itertools
 
 # protflow
-import protflow
 from protflow.utils.biopython_tools import load_structure_from_pdbfile, save_structure_to_pdbfile
 from protflow.utils.utils import vdw_radii
 from protflow.jobstarters import SbatchArrayJobstarter, LocalJobStarter
@@ -490,7 +487,7 @@ def check_if_angle_in_bin(df, phi, psi, phi_psi_bin):
     return df
 
 
-def identify_positions_for_rotamer_insertion(fraglib_path, rotlib, rot_sec_struct, phi_psi_bin, directory, script_path, prefix, chi_std_multiplier, jobstarter, cpus) -> pd.DataFrame:
+def identify_positions_for_rotamer_insertion(fraglib_path, rotlib, rot_sec_struct, phi_psi_bin, directory, script_path, prefix, chi_std_multiplier, jobstarter) -> pd.DataFrame:
 
     os.makedirs(directory, exist_ok=True)
     out_pkl = os.path.join(directory, f"{prefix}_rotamer_positions_collected.pkl")
@@ -512,15 +509,8 @@ def identify_positions_for_rotamer_insertion(fraglib_path, rotlib, rot_sec_struc
     cmds = [f"{script_path} --input_json {in_file} --fraglib {fraglib_path} --output_pickle {out_file} --phi_psi_bin {phi_psi_bin} --chi_std_multiplier {chi_std_multiplier}" for in_file, out_file in zip(in_filenames, out_filenames)]
     if rot_sec_struct:
         cmds = [cmd + f" --rot_sec_struct {rot_sec_struct}" for cmd in cmds]
-
-    if jobstarter == "SbatchArray":
-        jobstarter = SbatchArrayJobstarter(max_cores=cpus)
-    elif jobstarter == "Local":
-        jobstarter = LocalJobStarter(max_cores=cpus)
-    else:
-        raise KeyError("Jobstarter must be either 'SbatchArray' or 'Local'!")
     
-    jobstarter.start(cmds=cmds, output_path=directory)
+    jobstarter.start(cmds=cmds, jobname="position_identification", output_path=directory)
     #sbatch_array_jobstarter(cmds=cmds, sbatch_options=sbatch_options, jobname="id_rot_pos", max_array_size=320, wait=True, remove_cmdfile=False, cmdfile_dir=directory)
 
     rotamer_positions = []
@@ -1098,7 +1088,7 @@ def main(args):
     logging.info(cmd)
 
     #import and prepare stuff
-    riff_diff_dir = os.path.dirname(os.path.abspath(__file__))
+    riff_diff_dir = os.path.abspath(args.riff_diff_dir)
     database_dir = os.path.join(riff_diff_dir, "database")
     utils_dir = os.path.join(riff_diff_dir, "utils")
     rotlib_dir = os.path.join(database_dir, "bb_dep_rotlibs")
@@ -1249,7 +1239,7 @@ def main(args):
 
         for residue_identity in residue_identities:
             #find rotamer library for given amino acid
-            log_and_print(f"Importing backbone dependent rotamer library for residue {residue_identity} from {args.database_dir}")
+            log_and_print(f"Importing backbone dependent rotamer library for residue {residue_identity} from {database_dir}")
             rotlib = return_residue_rotamer_library(rotlib_dir, residue_identity)
             rotlib = normalize_col(rotlib, 'log_prob', scale=True)
             rotlib = normalize_col(rotlib, 'log_occurrence', scale=True)
@@ -1268,8 +1258,13 @@ def main(args):
         log_and_print(f"Writing phi/psi combinations to {rotlibcsv}.")
         rotlib.to_csv(rotlibcsv)
 
+        # setting up jobstarters
+        if args.jobstarter == "SbatchArray": jobstarter = SbatchArrayJobstarter(max_cores=args.cpus)
+        elif args.jobstarter == "Local": jobstarter = LocalJobStarter(max_cores=args.cpus)
+        else: raise KeyError("Jobstarter must be either 'SbatchArray' or 'Local'!")
+
         log_and_print(f"Identifying positions for rotamer insertion...")
-        rotamer_positions = identify_positions_for_rotamer_insertion(fraglib_path, rotlib, args.rot_sec_struct, args.phi_psi_bin, os.path.join(args.output_dir, "rotamer_positions"), os.path.join(utils_dir, "identify_positions_for_rotamer_insertion.py"), f"{args.output_prefix}_{args.theozyme_resnum}", args.chi_std_multiplier, jobstarter=args.jobstarter, cpus=args.cpus)
+        rotamer_positions = identify_positions_for_rotamer_insertion(fraglib_path, rotlib, args.rot_sec_struct, args.phi_psi_bin, os.path.join(args.output_dir, "rotamer_positions"), os.path.join(utils_dir, "identify_positions_for_rotamer_insertion.py"), f"{args.output_prefix}_{args.theozyme_resnum}", args.chi_std_multiplier, jobstarter=jobstarter)
         log_and_print(f"Found {len(rotamer_positions.index)} fitting positions.")
 
         log_and_print(f"Extracting fragments from rotamer positions...")
@@ -1433,6 +1428,7 @@ if __name__ == "__main__":
     argparser = argparse.ArgumentParser(formatter_class=argparse.ArgumentDefaultsHelpFormatter)
 
     # mandatory input
+    argparser.add_argument("--riff_diff_dir", default=".", type=str, help="Path to the riff_diff directory. This is workaround and will hopefully be resolved later.")
     argparser.add_argument("--theozyme_pdb", type=str, required=True, help="Path to pdbfile containing theozyme, must contain all residues in chain A numbered from 1 to n, ligand must be in chain Z (if there is one).")
     argparser.add_argument("--theozyme_resnum", required=True, help="Residue number with chain information (e.g. 25A) in theozyme pdb to find fragments for.")
     argparser.add_argument("--output_dir", type=str, required=True, help="Output directory")
@@ -1479,6 +1475,7 @@ if __name__ == "__main__":
     argparser.add_argument("--occurrence_weight", type=float, default=1, help="Weight for phi/psi-occurrence importance when picking rotamers.")
     argparser.add_argument("--backbone_score_weight", type=float, default=1, help="Weight for importance of fragment backbone score (boltzman score of number of occurrences of similar fragments in the database) when sorting fragments.")
     argparser.add_argument("--rotamer_score_weight", type=float, default=1, help="Weight for importance of rotamer score (combined score of probability and occurrence) when sorting fragments.")
+    argparser.add_argument("--chi_std_multiplier", type=float, default=2, help="Multiplier for chi angle standard deviation to check if rotamer in database fits to desired rotamer.")
 
 
     args = argparser.parse_args()
