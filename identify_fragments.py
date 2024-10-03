@@ -10,7 +10,6 @@ import math
 import pandas as pd
 import numpy as np
 import matplotlib.pyplot as plt
-#from matplotlib.colors import Normalize
 import time
 import itertools
 
@@ -522,6 +521,8 @@ def identify_positions_for_rotamer_insertion(fraglib_path, rotlib, rot_sec_struc
         rotamer_positions.append(df)
 
     rotamer_positions = pd.concat(rotamer_positions)
+    # TODO: Find out why this is necessary, there should not be any duplicates in theory
+    rotamer_positions = rotamer_positions.loc[~rotamer_positions.index.duplicated(keep='first')]
     rotamer_positions.to_pickle(out_pkl)
     
     return rotamer_positions
@@ -551,56 +552,121 @@ def scale_col(df:pd.DataFrame, col:str, inplace=False) -> pd.DataFrame:
     return df
 
 
-def create_frag_identifier(df, pos, index):
+def create_frag_identifier(df, pos):
     dihedrals = ['phi', 'psi', 'omega']
+    index = df['rotamer_index'].values[0]
+    # Round the values and replace -180 with 180 using vectorized operations
     for col in dihedrals:
-        df[f'{col}_rounded'] = df[col].round(-1)
-        df.loc[df[f'{col}_rounded'] == -180, f'{col}_rounded'] = 180
-        #increase bin size for omega
-        if col == 'omega':
-            df.loc[df[f'{col}_rounded'] == -180, f'{col}_rounded'] = 180
-    identifier = "_".join([f"{phi}_{psi}_{omega}" for phi, psi, omega in zip(df['phi_rounded'].to_list(), df['psi_rounded'].to_list(), df['omega_rounded'].to_list())])
-    identifier = identifier + f"_{index}_{pos}"
-    df.drop([f"{col}_rounded" for col in dihedrals], axis=1, inplace=True)
+        rounded_col = f'{col}_rounded'
+        df[rounded_col] = df[col].round(-1)
+        df[rounded_col] = df[rounded_col].replace(-180, 180)  # Replace -180 with 180
+    
+    # Create the identifier using vectorized string operations
+    identifier = (df['phi_rounded'].astype(str) + '_' + 
+                  df['psi_rounded'].astype(str) + '_' + 
+                  df['omega_rounded'].astype(str)).str.cat(sep='_') + f"_{index}_{pos}"
     return identifier
 
-def extract_fragments(rotamer_positions_df, fraglib, frag_pos_to_replace, fragsize):
+def has_consecutive_numbers(df:pd.DataFrame, fragsize):
+    if df['position'].diff().sum() + 1 == fragsize: return True
+    else: return False
+
+def trim_indices(arr, upper_limit, lower_limit, n):
+    # remove n indices as long as there are indices above upper_limit or below lower limit
+    while arr[-1] > upper_limit:
+        arr = arr[:-n] 
+    while arr[0] < lower_limit:
+        arr = arr[n:]
+    return arr
+
+
+def extract_fragments(rotamer_positions_df: pd.DataFrame, fraglib: pd.DataFrame, frag_pos_to_replace: list, fragsize: int):
     '''
-    finds fragments based on phi/psi combination and residue identity
     frag_pos_to_replace: the position in the fragment the future rotamer should be inserted. central position recommended.
     residue_identity: only accept fragments with the correct residue identity at that position (recommended)
     rotamer_secondary_structure: accepts a string describing secondary structure (B: isolated beta bridge residue, E: strand, G: 3-10 helix, H: alpha helix, I: pi helix, T: turn, S: bend, -: none (not in the sense of no filter --> use None instead!)). e.g. provide EH if central atom in fragment should be a helix or strand.
-    bfactor_cutoff: only return fragments with bfactor below this threshold
-    rmsd_cutoff: compare fragments by fragments, only accept fragments that have rmsd above this threshold.
     '''
 
     #choose fragments from fragment library that contain the positions selected above
     fragnum = 0
     frag_dict = {}
+    rotamer_positions_df["temp_index_for_merge"] = rotamer_positions_df.index
     for pos in frag_pos_to_replace:
-        frag_dict[pos] = []
-    for index, row in rotamer_positions_df.iterrows():
-        for pos in frag_pos_to_replace:
-            upper = index + fragsize - pos
-            lower = index - pos + 1
-            df = fraglib.loc[lower:upper, fraglib.columns]
-            #only choose fragments with correct length etc
-            if is_unique(df['pdb']) and len(df) == fragsize and check_for_chainbreaks(df, 'position', fragsize) == True:
-                fragnum = fragnum + 1
-                df.loc[:, 'frag_identifier'] = create_frag_identifier(df, pos, row['rotamer_index'])
-                df.loc[:, 'frag_num'] = fragnum
-                df.loc[:, 'rotamer_id'] = row['AA']
-                df.at[index, 'probability'] = row['probability']
-                df.at[index, 'phi_psi_occurrence'] = row['phi_psi_occurrence'] * 100
-                df.loc[:, 'rotamer_score'] = row['rotamer_score']
-                df.loc[:, 'rotamer_pos'] = pos
-                frag_dict[pos].append(df)
+        rotamer_positions_df["temp_pos_for_merge"] = pos
+        
+        # define start and end index for each position
+        index_starts = rotamer_positions_df.index - pos + 1
+        index_ends = index_starts + fragsize
 
-    for pos in frag_dict:
-        if len(frag_dict[pos]) > 0:
-            frag_dict[pos] = pd.concat(frag_dict[pos])
-        else:
+        # create range between start and end
+        all_values = []
+        for start, end in zip(index_starts, index_ends):
+            all_values.extend(range(start, end))  # Append the range to the list
+        indices = np.array(all_values)
+
+        # check if indices are below 0 or above fraglib size
+        indices = trim_indices(indices, fraglib.index.max(), 0, fragsize)
+
+        # extract all indices
+        df = fraglib.loc[indices]
+        df['temp_index_for_merge'] = df.index
+        df.reset_index(drop=True, inplace=True)
+
+        # group by fragsize
+        group_key = df.index // fragsize
+        # check if each group has a unique pdb (to prevent taking frags with res from different pdbs) and consecutive numbers (to prevent using frags with chainbreaks)
+        valid_groups = df.groupby(group_key).filter(lambda x: x['pdb'].nunique() == 1 and has_consecutive_numbers(x, fragsize))
+        if valid_groups.empty:
+            log_and_print(f"No fragments passed for position {pos}!")
             frag_dict[pos] = pd.DataFrame()
+            continue
+
+        valid_groups.reset_index(drop=True, inplace=True)
+
+        # Create a new identifier column based on the valid groups
+        group_key = valid_groups.index // fragsize
+        valid_group_ids = valid_groups.groupby(group_key).ngroup() + 1  # Create unique group identifiers
+
+        # Assign the identifier to the filtered DataFrame
+        valid_groups['frag_num'] = valid_group_ids + fragnum
+
+        # number residues within fragments from 1 to fragsize
+        valid_groups['residue_numbers'] = valid_groups.groupby(group_key).cumcount() + 1
+
+        # merge with rotamer_positions df on index column and correct position (to make sure not merging with rotamer at another position!)
+        valid_groups_merge = valid_groups.copy()
+        preserve_cols = ['temp_index_for_merge', 'temp_pos_for_merge', 'AA', 'probability', 'phi_psi_occurrence', 'rotamer_score', 'rotamer_index']
+        valid_groups_merge = valid_groups_merge[['temp_index_for_merge', 'residue_numbers', 'frag_num']].merge(rotamer_positions_df[preserve_cols], left_on=['temp_index_for_merge', 'residue_numbers'], right_on=['temp_index_for_merge', 'temp_pos_for_merge'])
+
+        # modify df for downstream processing
+        valid_groups_merge.rename({'AA': 'rotamer_id'}, inplace=True, axis=1)
+        valid_groups_merge.drop(['temp_index_for_merge', 'residue_numbers'], axis=1, inplace=True)
+        valid_groups_merge['phi_psi_occurrence'] = valid_groups_merge['phi_psi_occurrence'] * 100
+
+        # merge back with all residues from fragments
+        frags_df = valid_groups.merge(valid_groups_merge, on="frag_num")
+
+        # set non-rotamer positions to 0
+        frags_df.loc[frags_df['residue_numbers'] != pos, 'probability'] = None
+        frags_df.loc[frags_df['residue_numbers'] != pos, 'phi_psi_occurrence'] = None
+
+        # define rotamer position
+        frags_df['rotamer_pos'] = pos
+
+        # assign identifier based on phi/psi/omega angles, rotamer id and rotamer position
+        frags_l = []
+        for _, df in frags_df.groupby("frag_num", sort=False):
+            df["frag_identifier"] = create_frag_identifier(df,pos)
+            frags_l.append(df)
+        frags_df = pd.concat(frags_l)
+
+        # add fragnum so that fragment numbering is continous for next position
+        fragnum = fragnum + frags_df['frag_num'].max()
+
+        # drop identifier column
+        frags_df.drop(['temp_index_for_merge', 'temp_pos_for_merge'], axis=1, inplace=True)
+
+        frag_dict[pos] = frags_df
 
     return frag_dict
 
@@ -1266,7 +1332,15 @@ def main(args):
         log_and_print(f"Identifying positions for rotamer insertion...")
         rotamer_positions = identify_positions_for_rotamer_insertion(fraglib_path, rotlib, args.rot_sec_struct, args.phi_psi_bin, os.path.join(args.output_dir, "rotamer_positions"), os.path.join(utils_dir, "identify_positions_for_rotamer_insertion.py"), f"{args.output_prefix}_{args.theozyme_resnum}", args.chi_std_multiplier, jobstarter=jobstarter)
         log_and_print(f"Found {len(rotamer_positions.index)} fitting positions.")
+        # Identify duplicate indices
+        duplicate_indices = rotamer_positions.index[rotamer_positions.index.duplicated()]
 
+        # Filter DataFrame to get rows with duplicate indices
+        duplicate_rows_df = rotamer_positions.loc[duplicate_indices]
+
+        # Print all columns for the rows with duplicate indices
+        print(duplicate_rows_df)
+        duplicate_rows_df.to_csv("duplicates.csv")
         log_and_print(f"Extracting fragments from rotamer positions...")
         frag_dict = extract_fragments(rotamer_positions, fraglib, frag_pos_to_replace, args.fragsize)
         frag_num = int(sum([len(frag_dict[pos].index) for pos in frag_dict]) / args.fragsize)
@@ -1278,6 +1352,7 @@ def main(args):
             log_and_print(f'Found {frag_nums} fragments for position {pos}.')
             if frag_nums == 0:
                 frag_dict.pop(pos)
+                log_and_print(f"Could not find fragments for position {pos}.")
                 continue
             if sec_dict:
                 frag_dict[pos] = filter_frags_df_by_secondary_structure_content(frag_dict[pos], sec_dict)
