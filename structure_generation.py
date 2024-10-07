@@ -1,7 +1,3 @@
-#!/home/tripp/mambaforge/envs/protflow_new/bin/python
-'''
-Script to run RFdiffusion active-site model on artificial motif libraries.
-'''
 #imports
 import json
 import logging
@@ -12,11 +8,9 @@ import glob
 import copy
 import itertools
 import shutil
-
-# dependency
 import numpy as np
 import pandas as pd
-import matplotlib
+
 import protflow
 import protflow.config
 from protflow.jobstarters import SbatchArrayJobstarter
@@ -29,83 +23,95 @@ import protflow.tools.ligandmpnn
 import protflow.tools.attnpacker
 import protflow.metrics.rmsd
 import protflow.metrics.tmscore
-import protflow.metrics.fpocket
 import protflow.tools.protein_edits
 import protflow.tools.rfdiffusion
+from protflow.poses import Poses
+from protflow.residues import ResidueSelection
 from protflow.metrics.generic_metric_runner import GenericMetric
 from protflow.metrics.ligand import LigandClashes, LigandContacts
 from protflow.metrics.rmsd import BackboneRMSD, MotifRMSD, MotifSeparateSuperpositionRMSD
 import protflow.tools.rosetta
 from protflow.utils.biopython_tools import renumber_pdb_by_residue_mapping, load_structure_from_pdbfile, save_structure_to_pdbfile
 import protflow.utils.plotting as plots
-#from protflow.utils.metrics import calc_rog_of_pdb
-
-# custom
-
-# local
-sys.path.append("/home/mabr3112/riff_diff/")
-from utils.pymol_tools_protflow import write_pymol_alignment_script
 
 
-if __file__.startswith("/home/mabr3112"):
-    matplotlib.use('Agg')
-else:
-    print("Using Matplotlib without 'Agg' backend.")
+def write_pymol_alignment_script(df:pd.DataFrame, scoreterm: str, top_n:int, path_to_script: str, ascending=True, use_original_location=False,
+                                 ref_motif_col: str = "template_motif", target_motif_col: str = "motif_residues",
+                                 ref_catres_col: str = "template_fixedres", target_catres_col: str = "fixed_residues"
+                                 ) -> str:
+    '''
+    Writes .pml script for automated pymol alignment.
+    '''
+    cmds = []
+    for index in df.sort_values(scoreterm, ascending=ascending).head(top_n).index:
+        cmd = write_align_cmds(
+            input_data=df.loc[index],
+            use_original_location=use_original_location,
+            ref_motif_col=ref_motif_col,
+            target_motif_col=target_motif_col,
+            ref_catres_col=ref_catres_col,
+            target_catres_col=target_catres_col
+        )
+        cmds.append(cmd)
 
-def divide_flanking_residues(residual: int, flanking: str) -> tuple:
-    '''Splits up flanking residues. This function is a relic of past times.'''
-    def split_flankers(residual) -> tuple:
-        ''''''
-        cterm = residual // 2
-        nterm = residual - cterm
-        return nterm, cterm
+    with open(path_to_script, 'w', encoding="UTF-8") as f:
+        f.write("\n".join(cmds))
+    return path_to_script
 
-    residual = int(residual)
-    if residual < 6 or flanking == "split":
-        return split_flankers(residual)
-    elif flanking == "nterm":
-        return residual-3, 3
-    elif flanking == "cterm":
-        return 3, residual-3
-    else:
-        raise ValueError(f"Paramter <flanking> can only be 'split', 'nterm', or 'cterm'. flanking: {flanking}")
+def write_align_cmds(input_data: pd.Series, use_original_location=False, ref_motif_col: str = "template_motif", target_motif_col: str = "motif_residues", ref_catres_col: str = "template_fixedres", target_catres_col: str = "fixed_residues"):
+    '''AAA'''
+    cmds = list()
+    if use_original_location: 
+        ref_pose = input_data["input_poses"].replace(".pdb", "")
+        pose = input_data["esm_location"]
+    else: 
+        ref_pose = input_data["input_poses"].split("/")[-1].replace(".pdb", "")
+        pose = input_data["poses_description"] + ".pdb"
 
-def adjust_flanking(rfdiffusion_pose_opts: str, flanking_type: str, total_flanker_length:int=None) -> str:
-    '''adjusts length of flanking residues in contig. Another relic of long gone times.'''
-    def get_contigs_str(rfdiff_opts: str) -> str:
-        elem = [x for x in rfdiff_opts.split(" ") if x.startswith("'contigmap.contigs=")][0]
-        contig_start = elem.find("[") +1
-        contig_end = elem.find("]")
-        return elem[contig_start:contig_end]
+    # load pose and reference
+    cmds.append(f"load {pose}")
+    ref_pose_name = input_data['poses_description'] + "_ref"
+    cmds.append(f"load {ref_pose}.pdb, {ref_pose_name}")
 
-    # extract contig from contigs_str
-    contig = get_contigs_str(rfdiffusion_pose_opts)
+    # basecolor
+    cmds.append(f"color violetpurple, {input_data['poses_description']}")
+    cmds.append(f"color yelloworange, {ref_pose_name}")
 
-    # extract flankings and middle part
-    csplit = contig.split("/")
-    og_nterm, middle, og_cterm = int(csplit[0]), "/".join(csplit[1:-1]), int(csplit[-1])
+    # select inpaint_motif residues
+    cmds.append(f"select temp_motif_res, {write_pymol_motif_selection(input_data['poses_description'], input_data[target_motif_col])}")
+    cmds.append(f"select temp_ref_res, {write_pymol_motif_selection(ref_pose_name, input_data[ref_motif_col])}")
 
-    # readjust flankings according to flanking_type and max_pdb_length
-    pdb_length = total_flanker_length or og_nterm+og_cterm
-    nterm, cterm = divide_flanking_residues(pdb_length, flanking=flanking_type)
+    # alignimpose inpaint_motif_residues:
+    cmds.append(f"align temp_ref_res, temp_motif_res")
 
-    # reassemble contig string and replace with hallucinate pose opts.
-    reassembled = f"{nterm}/{middle}/{cterm}"
-    return rfdiffusion_pose_opts.replace(contig, reassembled)
+    # select fixed residues, show sticks and color
+    cmds.append(f"select temp_cat_res, {write_pymol_motif_selection(input_data['poses_description'], input_data[target_catres_col])}")
+    cmds.append(f"select temp_refcat_res, {write_pymol_motif_selection(ref_pose_name, input_data[ref_catres_col])}")
+    cmds.append(f"show sticks, temp_cat_res")
+    cmds.append(f"show sticks, temp_refcat_res")
+    cmds.append(f"hide sticks, hydrogens")
+    cmds.append(f"color atomic, (not elem C)")
 
-def overwrite_linker_length(pose_opts: str, total_length:int, max_linker_length:int=100) -> str:
-    '''overwrites linker length and allows linkers to be of any length (with at least the provided linker length)'''
-    # extract contig string from pose_opts
-    full_contig_str = [x for x in pose_opts.split(" ") if x.startswith("'contigmap.contigs")][0]
-    contig_str = full_contig_str[full_contig_str.find("[")+1:full_contig_str.find("]")]
-    contigs = [x for x in contig_str.split("/") if x][1:-1]
+    # store scene, delete selection and disable object:
+    cmds.append(f"center temp_motif_res")
+    cmds.append(f"scene {input_data['poses_description']}, store")
+    cmds.append(f"disable {input_data['poses_description']}")
+    cmds.append(f"disable {ref_pose_name}")
+    cmds.append(f"delete temp_cat_res")
+    cmds.append(f"delete temp_refcat_res")
+    cmds.append(f"delete temp_motif_res")
+    cmds.append(f"delete temp_ref_res")
+    return "\n".join(cmds)
 
-    # replace fixed linkers in contigs string with linker ranges
-    new_contigs = "/".join([x if x[0].isalpha() else f"{x}-{str(max_linker_length)}" for x in contigs])
-    new_contig_str = full_contig_str.replace("/".join(contigs), new_contigs)
+def write_pymol_motif_selection(obj: str, motif: dict) -> str:
+    '''AAA'''
+    if isinstance(motif, ResidueSelection):
+        motif = motif.to_dict()
 
-    # return replaced contig pose-opts:
-    return pose_opts.replace(full_contig_str, f"{new_contig_str} contigmap.length={str(total_length)}-{str(total_length)} ")
+    residues = [f"chain {chain} and resi {'+'.join([str(x) for x in res_ids])}" for chain, res_ids in motif.items()]
+    pymol_selection = ' or '.join([f"{obj} and {resis}" for resis in residues])
+    return pymol_selection
+
 
 def update_and_copy_reference_frags(input_df: pd.DataFrame, ref_col:str, desc_col:str, prefix: str, out_pdb_path=None, keep_ligand_chain:str="") -> "list[str]":
     '''Updates reference fragments (input_pdbs) to the motifs that were set during diffusion.'''
@@ -117,42 +123,6 @@ def update_and_copy_reference_frags(input_df: pd.DataFrame, ref_col:str, desc_co
 
     # renumber
     return [renumber_pdb_by_residue_mapping(ref_frag, res_mapping, out_pdb_path=pdb_output, keep_chain=keep_ligand_chain) for ref_frag, res_mapping, pdb_output in zip(input_df[ref_col].to_list(), list_of_mappings, output_pdb_names_list)]
-
-def active_site_pose_opts(input_opt: str, motif: protflow.residues.ResidueSelection, as_model_path: str) -> str:
-    '''Converts rfdiffusion_pose_opts string from default model to pose_opts string for active_site model (removes inpaint_seq and stuff.)'''
-    def re_split_rfdiffusion_opts(command: str) -> list:
-        if command is None:
-            return []
-        return re.split(r"\s+(?=(?:[^']*'[^']*')*[^']*$)", command)
-    # split args in rfdiffusion string and remove inpaint_seq
-    opts_l = [x for x in re_split_rfdiffusion_opts(input_opt) if "inpaint_seq" not in x]
-    contig = opts_l[0]
-
-    # change linker minimum lengths:
-    contig = replace_number_with_10(contig)
-
-    # exchange fixed residues in contig:
-    for (chain, res) in motif.residues:
-        contig = contig.replace(f"{chain}1-7", f"{chain}{res}-{res}")
-
-    # remerge contig into opts_l and return concatenated opts:
-    opts_l[0] = contig
-    opts_l.append(f"inference.ckpt_override_path={as_model_path}")
-    return " ".join(opts_l)
-
-def replace_number_with_10(input_string):
-    '''Replaces minimum linker length in rfdiffusion contig (from x-50 to 10-50)'''
-    # This regex matches any sequence of digits followed by '-50'
-    pattern = r'\d+-50'
-    # Replace found patterns with '10-50'
-    return re.sub(pattern, '10-50', input_string)
-
-def adjust_linker_length(motif_residues: dict, total_length: int, flanker_length: int, pose_opts: str):
-    num_linkers = len(motif_residues) - 1
-    total_motif_len = sum(len(motif_res) for motif_res in motif_residues)
-    linker_length = int(3 + (total_length - flanker_length - total_motif_len) / num_linkers) # 3 is added to conserve original 50/200 linker_length/total_length ratio in case of 4 AS residues with 7 res fragments
-    adjusted_pose_opts = overwrite_linker_length(pose_opts, total_length, linker_length)
-    return adjusted_pose_opts
 
 def instantiate_trajectory_plotting(plot_dir, df):
     # instantiate plotting trajectories:
@@ -251,21 +221,6 @@ def create_final_results_dir(poses, dir:str):
         show_fig = False
     )
 
-    '''
-    trajectory_scores = ["plddt", "catres_heavy_rmsd", "catres_bb_rmsd"]
-    prefixes = ["final_AF"] + [f"cycle_{i}" for i in range(1, cycle+1)]
-
-    for score in trajectory_scores:
-        plots.violinplot_multiple_cols(
-            dataframe=poses.df,
-            cols=[f"{prefix}_{score}" for prefix in prefixes],
-            y_labels=["Angstrom", "Angstrom", "Angstrom", "Angstrom", "Angstrom"],
-            titles=["Mean AF2\nSidechain RMSD", "Mean AF2 catres\nBB RMSD", "Mean Relaxed\nSidechain RMSD", "Mean Relaxed catres\nBB RMSD", "Mean Postrelax\nLigand RMSD"],
-            out_path=os.path.join(dir, "evaluation_mean_rmsds.png"),
-            show_fig=False
-        )
-    '''
-
     plots.violinplot_multiple_cols(
         dataframe=poses.df,
         cols=["final_AF2_catres_heavy_rmsd_mean", "final_AF2_catres_bb_rmsd_mean", "final_postrelax_catres_heavy_rmsd_mean", "final_postrelax_catres_bb_rmsd_mean", "final_postrelax_ligand_rmsd_mean"],
@@ -315,21 +270,6 @@ def create_variants_results_dir(poses, dir:str):
         out_path = os.path.join(dir, f"variants_results.png"),
         show_fig = False
     )
-
-    '''
-    trajectory_scores = ["plddt", "catres_heavy_rmsd", "catres_bb_rmsd"]
-    prefixes = ["final_AF"] + [f"cycle_{i}" for i in range(1, cycle+1)]
-
-    for score in trajectory_scores:
-        plots.violinplot_multiple_cols(
-            dataframe=poses.df,
-            cols=[f"{prefix}_{score}" for prefix in prefixes],
-            y_labels=["Angstrom", "Angstrom", "Angstrom", "Angstrom", "Angstrom"],
-            titles=["Mean AF2\nSidechain RMSD", "Mean AF2 catres\nBB RMSD", "Mean Relaxed\nSidechain RMSD", "Mean Relaxed catres\nBB RMSD", "Mean Postrelax\nLigand RMSD"],
-            out_path=os.path.join(dir, "evaluation_mean_rmsds.png"),
-            show_fig=False
-        )
-    '''
 
     plots.violinplot_multiple_cols(
         dataframe=poses.df,
@@ -385,7 +325,7 @@ def get_params_file(dir:str, params) -> str:
 def import_multiple_ligands(dir):
     ligand_paths = glob(os.path.join(dir, "ligand/LG?.pdb"))
     ligands = []
-    print(f'Importing ligands {ligand_paths}.')
+    logging.info(f'Importing ligands from {ligand_paths}.')
     for lig in ligand_paths:
         lig = load_structure_from_pdbfile(lig)
         lig = [i for i in lig.get_residues()][0]
@@ -393,12 +333,12 @@ def import_multiple_ligands(dir):
     
     return ligands
 
-def calculate_mean_scores(poses: protflow.poses.Poses, scores: list, remove_layers: int=None):
+def calculate_mean_scores(poses: Poses, scores: list, remove_layers: int=None):
     for score in scores:
         poses.calculate_mean_score(name=f"{score}_mean", score_col=score, remove_layers=remove_layers)
     return poses
 
-def combine_screening_results(dir: str, prefixes: list, scores: list, weights: list, residue_cols: list, model: str, input_motifs: protflow.poses.Poses):
+def combine_screening_results(dir: str, prefixes: list, scores: list, weights: list, residue_cols: list, model: str, input_motifs: Poses):
     if len(prefixes) == 0:
         logging.error("No poses passed in any of the screening runs. Aborting!"); sys.exit(1)
     
@@ -413,7 +353,7 @@ def combine_screening_results(dir: str, prefixes: list, scores: list, weights: l
         df['screen_passed_poses'] = len(df.index)
         pose_df.append(df)
     pose_df = pd.concat(pose_df).reset_index(drop=True)
-    poses = protflow.poses.Poses(poses=pose_df, work_dir=dir)
+    poses = Poses(poses=pose_df, work_dir=dir)
 
     # recalculate composite score over all screening runs
     poses.calculate_composite_score(
@@ -425,7 +365,7 @@ def combine_screening_results(dir: str, prefixes: list, scores: list, weights: l
 
     # convert columns to residues (else, pymol script writer and refinement crash)
     for residue_col in residue_cols:
-        poses.df[residue_col] = [protflow.residues.ResidueSelection(motif, from_scorefile=True) for motif in poses.df[residue_col].to_list()]
+        poses.df[residue_col] = [ResidueSelection(motif, from_scorefile=True) for motif in poses.df[residue_col].to_list()]
     # calculate screening composite score
     poses.calculate_composite_score(name='screening_composite_score', scoreterms=scores, weights=weights, plot=True)
 
@@ -486,7 +426,7 @@ def split_combined_ligand(poses_dir:str, ligand_dir: list, ligand_chain: str = "
     logging.info('Replacing RFdiffusion combined ligand with separated ligands...')
     ligand_paths = glob.glob(os.path.join(ligand_dir, f"LG?.pdb"))
     new_ligands = [[res for res in load_structure_from_pdbfile(new_lig).get_residues()][0] for new_lig in ligand_paths]
-    poses = protflow.poses.Poses(poses=poses_dir, glob_suffix="*.pdb")
+    poses = Poses(poses=poses_dir, glob_suffix="*.pdb")
     for pose_path in poses.df['poses'].to_list():
         pose = load_structure_from_pdbfile(pose_path)
         original_ligands = [lig for lig in pose[ligand_chain].get_residues()]
@@ -496,7 +436,7 @@ def split_combined_ligand(poses_dir:str, ligand_dir: list, ligand_chain: str = "
             pose[ligand_chain].add(new_lig)
         save_structure_to_pdbfile(pose, pose_path)
 
-def create_reduced_motif(fixed_res:protflow.residues.ResidueSelection, motif_res:protflow.residues.ResidueSelection):
+def create_reduced_motif(fixed_res:ResidueSelection, motif_res:ResidueSelection):
     reduced_dict = {}
     fixed_res = fixed_res.to_dict()
     motif_res = motif_res.to_dict()
@@ -551,6 +491,28 @@ def determine_last_ref_cycle(df: pd.DataFrame) -> int:
     last_cycle = max(nums)
     return last_cycle
 
+def write_rfdiffusion_contig(frag_contigs:str, total_length:int, flanker_length:int, frag_sizes:str, flanker_type:str, channel_contig:str=None, sep=","):
+    frag_contigs = [frag for frag in frag_contigs.split(sep)]
+    frag_total_length = sum([int(size) for size in frag_sizes.split(sep)])
+    num_linkers = len(frag_contigs) - 1
+    linker_length = 5 + int((total_length - flanker_length - frag_total_length) / num_linkers)
+    frag_contigs = f"/10-{linker_length}/".join(frag_contigs)
+    if flanker_type == "split":
+        contig = f"{flanker_length}/{frag_contigs}/{flanker_length}"
+    elif flanker_type == "cterm":
+        contig = f"{frag_contigs}/{flanker_length}"
+    elif flanker_type == "nterm":
+        contig = f"{flanker_length}/{frag_contigs}"
+    else:
+        logging.error(f"<flanker_type> must be one of 'split', 'cterm' or 'nterm', not {flanker_type}!")
+        raise KeyError(f"<flanker_type> must be one of 'split', 'cterm' or 'nterm', not {flanker_type}!")
+    if channel_contig:
+        contig = f"{channel_contig}/0 {contig}"
+    return f"'contigmap.contigs=[{contig}]' "
+
+def write_rfdiffusion_inpaint_seq(frag_contigs:str, sep=","):
+    inpaint_seq = "/".join([frag for frag in frag_contigs.split(sep)])
+    return f"contigmap.inpaint_seq=[{inpaint_seq}]'"
 
 def main(args):
     '''executes everyting (duh)'''
@@ -581,7 +543,6 @@ def main(args):
     # set up runners
     logging.info(f"Settung up runners.")
     rfdiffusion = protflow.tools.rfdiffusion.RFdiffusion(jobstarter = gpu_jobstarter)
-    #fpocket_runner = protflow.metrics.fpocket.FPocket(jobstarter=cpu_jobstarter)
     chain_adder = protflow.tools.protein_edits.ChainAdder(jobstarter = small_cpu_jobstarter)
     chain_remover = protflow.tools.protein_edits.ChainRemover(jobstarter = small_cpu_jobstarter)
     bb_rmsd = BackboneRMSD(chains="A", jobstarter = small_cpu_jobstarter)
@@ -630,43 +591,29 @@ def main(args):
         # load poses
         input_poses_path = os.path.join(screening_dir, 'screening_input_poses', 'screening_input_poses.json')
         if args.screen_input_json:
-            backbones = protflow.poses.Poses(poses=args.screen_input_json)
+            backbones = Poses(poses=args.screen_input_json)
             backbones.set_work_dir(screening_dir)
         elif os.path.isfile(input_poses_path):
-            backbones = protflow.poses.Poses(poses=input_poses_path)
+            backbones = Poses(poses=input_poses_path)
             backbones.set_work_dir(screening_dir)
         else:
-            # very messy for historic reasons
-            # format path_df to be a DF readable by Poses class
             logging.info(f"Parsing inputs specified at {args.input_dir}")
-            input_df = pd.read_json(f"{args.input_dir}/selected_paths.json", typ="frame")
-            input_df = input_df.reset_index().rename(columns={"index": "poses_description"}) # pylint: disable=E1101
-            input_df["poses"] = f"{args.input_dir}/pdb_in/" + input_df["poses_description"] + ".pdb"
-            input_df["input_poses"] = input_df["poses"]
-            input_df.to_json((path_df := f"{args.output_dir}/paths.poses.json"))
-            backbones = protflow.poses.load_poses(path_df)
+            backbones = protflow.poses.load_poses(os.path.join(args.input_dir, "selected_paths.json"))
             backbones.set_work_dir(screening_dir)
-            if args.screen_from_top:
+            if args.screen_input_selection == "weighted":
+                backbones.df = backbones.df.sample(n=args.screen_input_poses, weights=backbones.df['path_score'])
+            elif args.screen_input_selection == "top":
                 backbones.filter_poses_by_rank(n=args.screen_input_poses, score_col='path_score', ascending=False, prefix='screening_input', plot=True)
-            else:
+            elif args.screen_input_selection == "random":
                 backbones.df = backbones.df.sample(n=args.screen_input_poses)
+            else:
+                logging.error(f"<screen_input_selection> must be one of 'weighted', 'top' or 'random', not {args.screen_input_selection}!")
+                raise KeyError(f"<screen_input_selection> must be one of 'weighted', 'top' or 'random', not {args.screen_input_selection}!")
             backbones.save_poses(os.path.join(screening_dir, 'screening_input_poses'))
             backbones.save_scores(input_poses_path)
         
         # save input backbones for later
         starting_motifs = copy.deepcopy(backbones)
-
-        # change flanker lengths of rfdiffusion motif contigs
-        if args.flanking:
-            backbones.df["rfdiffusion_pose_opts"] = [adjust_flanking(rfdiffusion_pose_opts_str, "split", args.flanker_length) for rfdiffusion_pose_opts_str in backbones.df["rfdiffusion_pose_opts"].to_list()]
-        elif args.flanker_length:
-            raise ValueError(f"Argument 'total_flanker_length' was given, but not 'flanking'! Both args have to be provided.")
-
-        # adjust linkers
-        if args.linker_length == 'auto':
-            backbones.df["rfdiffusion_pose_opts"] = [adjust_linker_length(motif_residues, args.total_length, args.flanker_length, rfdiffusion_pose_opts) for motif_residues, rfdiffusion_pose_opts in zip(backbones.df["motif_residues"].to_list(), backbones.df["rfdiffusion_pose_opts"].to_list())]
-        else:
-            backbones.df["rfdiffusion_pose_opts"] = [overwrite_linker_length(pose_opts, args.total_length, args.linker_length) for pose_opts in backbones.df["rfdiffusion_pose_opts"].to_list()]
 
         # convert motifs from dict to ResidueSelection
         backbones.df["fixed_residues"] = [protflow.residues.from_dict(motif) for motif in backbones.df["fixed_residues"].to_list()]
@@ -691,6 +638,10 @@ def main(args):
         ############################################## RFDiffusion ######################################################
     
         # setup rfdiffusion options:
+        backbones.df["rfdiffusion_contigs"] = backbones.df.apply(lambda row: write_rfdiffusion_contig(row['motif_contigs'], args.total_length, args.flanker_length, row["frag_length"], args.flanking, row["channel_contig"] if "channel_contig" in backbones.df.columns else None, sep=","), axis=1)
+        backbones.df["rfdiffusion_inpaint_seq"] = backbones.df.apply(lambda row: write_rfdiffusion_inpaint_seq(row['motif_contigs'], sep=","), axis=1)
+        backbones.df["rfdiffusion_pose_opts"] = backbones.df["rfdiffusion_contigs"] + backbones.df["rfdiffusion_inpaint_seq"]
+
         if args.recenter:
             logging.info(f"Parameter --recenter specified. Setting direction for custom recentering during diffusion towards {args.recenter}")
             if len(args.recenter.split(";")) != 3:
@@ -702,11 +653,7 @@ def main(args):
         # change pose_opts according to model being used:
         if args.model == "active_site":
             logging.info("Using Active Site Model. Changing contig strings from pose_options.")
-            backbones.df["rfdiffusion_pose_opts"] = [active_site_pose_opts(row["rfdiffusion_pose_opts"], row["template_fixedres"], as_model_path=args.as_model_path) for row in backbones]
-
-        # load channel_contig
-        if args.channel_contig != "None":
-            backbones.df["rfdiffusion_pose_opts"] = backbones.df["rfdiffusion_pose_opts"].str.replace("contigmap.contigs=[", f"contigmap.contigs=[{args.channel_contig}/0 ")
+            #backbones.df["rfdiffusion_pose_opts"] = [active_site_pose_opts(row["rfdiffusion_pose_opts"], row["template_fixedres"], as_model_path=args.as_model_path) for row in backbones]
 
         input_backbones = copy.deepcopy(backbones)
         decentralize_weights = args.screen_decentralize_weights.split(';')
@@ -720,7 +667,6 @@ def main(args):
             settings = tuple(itertools.product(substrate_contacts_weights, rog_weights))
         prefixes = [f"screen_{i+1}" for i, s in enumerate(settings)]
 
-        num_backbones = 0
         for prefix, setting in zip(prefixes, settings):
             logging.info(f"Running {prefix} with settings: {f'decentralize_weight: {setting[0]}, decentralize_distance: {setting[1]}' if args.model=='default' else f'substrate_contacts_weights: {setting[0]}, rog_weights: {setting[1]}'}")
             backbones = copy.deepcopy(input_backbones)
@@ -734,14 +680,12 @@ def main(args):
             backbones.df['screen'] = int(prefix.split('_')[1])
 
             backbones.set_work_dir(os.path.join(screening_dir, prefix))
-            # setup empty dictionary for all output metrics that should go into a separate DataFrame:
-            output_metrics = {"scTM_success": None, "baker_success": None, "fraction_ligand_clashes": None, "average_ligand_contacts": None, "fraction_ligand_contacts": None}
 
             # run diffusion
             if args.model == "active_site":
-                diffusion_options = f"diffuser.T={str(args.rfdiffusion_timesteps)} potentials.guide_scale=5 inference.num_designs={num_rfdiffusions} potentials.guiding_potentials=[\\'type:substrate_contacts,weight:{setting[0]}\\',\\'type:custom_ROG,weight:{setting[1]}\\'] potentials.guide_decay=quadratic"
+                diffusion_options = f"diffuser.T={str(args.rfdiffusion_timesteps)} potentials.guide_scale=5 inference.num_designs={num_rfdiffusions} potentials.guiding_potentials=[\\'type:substrate_contacts,weight:{setting[0]}\\',\\'type:custom_ROG,weight:{setting[1]}\\'] potentials.guide_decay=quadratic contigmap.length={args.total_length}-{args.total_length} potentials.substrate=LIG"
             else:
-                diffusion_options = f"diffuser.T={str(args.rfdiffusion_timesteps)} potentials.guide_scale=5 inference.num_designs={num_rfdiffusions} potentials.guiding_potentials=[\\'type:substrate_contacts,weight:0\\',\\'type:custom_recenter_ROG,weight:{setting[0]},rog_weight:0,distance:{setting[1]}{recenter}\\'] potentials.guide_decay=quadratic"
+                diffusion_options = f"diffuser.T={str(args.rfdiffusion_timesteps)} potentials.guide_scale=5 inference.num_designs={num_rfdiffusions} potentials.guiding_potentials=[\\'type:substrate_contacts,weight:0\\',\\'type:custom_recenter_ROG,weight:{setting[0]},rog_weight:0,distance:{setting[1]}{recenter}\\'] potentials.guide_decay=quadratic contigmap.length={args.total_length}-{args.total_length} potentials.substrate=LIG"
             backbones = rfdiffusion.run(
                 poses=backbones,
                 prefix="rfdiffusion",
@@ -751,8 +695,6 @@ def main(args):
                 update_motifs=motif_cols,
                 fail_on_missing_output_poses=False
             )
-
-            num_backbones = len(backbones)
 
             # remove channel chain (chain B)
             logging.info(f"Diffusion completed, removing channel chain from diffusion outputs.")
@@ -808,11 +750,6 @@ def main(args):
             logging.info(f"Calculating Ligand Statistics")
             backbones = ligand_clash.run(poses=backbones, prefix="rfdiffusion_ligand")
             backbones = ligand_contacts.run(poses=backbones, prefix="rfdiffusion_lig")
-
-            # collect ligand stats into output metrics:
-            output_metrics["average_ligand_contacts"] = float(np.nan_to_num(backbones.df[backbones.df["rfdiffusion_ligand_clashes"] < 1]["rfdiffusion_lig_contacts"].mean()))
-            output_metrics["fraction_ligand_contacts"] = len(backbones.df[(backbones.df["rfdiffusion_ligand_clashes"] < 1) & (backbones.df["rfdiffusion_lig_contacts"] > args.min_ligand_contacts)]) / num_backbones
-            output_metrics["fraction_ligand_clashes"] = len(backbones.df[backbones.df["rfdiffusion_ligand_clashes"] < 1]) / num_backbones
 
             # plot rfdiffusion_stats
             results_dir = os.path.join(backbones.work_dir, "results")
@@ -902,7 +839,6 @@ def main(args):
             # calculate ROG
             backbones = rog_calculator.run(poses=backbones, prefix="esm_rog")
             backbones.df.rename({"esm_rog_data": "esm_rog"}, inplace=True, axis=1)
-            #backbones.df["esm_rog"] = [calc_rog_of_pdb(pose) for pose in backbones.poses_list()]
 
             # calculate RMSDs (backbone, motif, fixedres)
             logging.info(f"Prediction of {len(backbones.df.index)} sequences completed. Calculating RMSDs to rfdiffusion backbone and reference fragment.")
@@ -947,15 +883,6 @@ def main(args):
                 copy_chain = args.ligand_chain
             )
 
-            '''
-            
-            fpocket_runner.run(
-                poses = backbones,
-                prefix = "postrelax",
-                options = f"--chain_as_ligand {args.ligand_chain}",
-            )
-            '''
-
             backbones = ligand_clash.run(poses=backbones, prefix="esm_ligand")
             backbones = ligand_contacts.run(poses=backbones, prefix="esm_lig")
 
@@ -994,22 +921,6 @@ def main(args):
                 show_fig = False
             )
 
-            # fill up remaining output_metrics post-prediction
-            output_metrics["scTM_success"] = len(backbones.df[backbones.df["esm_tm_sc_tm"] >= 0.5]) / num_backbones
-            baker_success_df = backbones.df[(backbones.df["esm_plddt"] >= 75) & (backbones.df["esm_backbone_rmsd"] <= 1.5) & (backbones.df["esm_catres_bb_rmsd"] <= 1.5)]
-            output_metrics["baker_success"] = len(baker_success_df) / num_backbones
-            enzyme_success_df = baker_success_df[(baker_success_df["rfdiffusion_ligand_clashes"] < 1) & (baker_success_df["rfdiffusion_lig_contacts"] > args.min_ligand_contacts) & (baker_success_df["rfdiffusion_rog"] <= args.max_rog)]
-            output_metrics["enzyme_success"] = len(baker_success_df[(baker_success_df["rfdiffusion_ligand_clashes"] < 1) & (baker_success_df["rfdiffusion_lig_contacts"] > args.min_ligand_contacts) & (baker_success_df["rfdiffusion_rog"] <= args.max_rog)]) / num_backbones
-
-            # save output metrics
-            output_metrics_str = "\n".join([f"\t{metric}: {value}" for metric, value in output_metrics.items()])
-            logging.info(f"num_backbones = {num_backbones}")
-            logging.info(f"Finished collection of output metrics.\n{output_metrics_str}\n")
-            with open(os.path.join(screening_dir, "output_metrics.json"), 'w', encoding="UTF-8") as f:
-                json.dump(output_metrics, f)
-
-            # calculate fraction of (design-successful) backbones where pocket was identified using fpocket.
-            #pocket_containing_fraction = backbones.df["postrelax_top_volume"].count() / len(backbones)
             #logging.info(f"Fraction of RFdiffusion design-successful backbones that contain active-site pocket: {pocket_containing_fraction}")
             backbones.df.sort_values("design_composite_score", ascending=True, inplace=True)
             backbones.df.reset_index(drop=True, inplace=True)
@@ -1019,9 +930,7 @@ def main(args):
             backbones.save_poses(out_path=results_dir)
             backbones.save_poses(out_path=results_dir, poses_col="input_poses")
             backbones.save_scores(out_path=results_dir)
-
-            # save pocket structures
-            #backbones.save_poses(out_path=pockets_dir, poses_col="postrelax_pocket_location")
+            backbones.save_scores()
 
             # write pymol alignment script?
             logging.info(f"Created results/ folder and writing pymol alignment script for best backbones at {results_dir}")
@@ -1035,20 +944,6 @@ def main(args):
                 target_catres_col = "fixed_residues",
                 target_motif_col = "fixed_residues"
             )
-
-            logging.info(f"Writing pymol alignment script for enzyme_success backbones at {results_dir}")
-            write_pymol_alignment_script(
-                df=enzyme_success_df,
-                scoreterm="design_composite_score",
-                top_n=len(enzyme_success_df),
-                path_to_script=f"{results_dir}/enzyme_success_backbones.pml",
-                ref_motif_col = "template_fixedres",
-                ref_catres_col = "template_fixedres",
-                target_catres_col = "fixed_residues",
-                target_motif_col = "fixed_residues"
-            )
-
-            backbones.save_scores()
 
             # write successfull motifs to file, so that they can be read in again
             backbones.df.drop_duplicates(subset=["input_poses"], keep="first", inplace=True)
@@ -1075,12 +970,12 @@ def main(args):
 
         if args.ref_input_json:
             logging.info(f"Reading in refinement input poses from {args.ref_input_json}!")
-            backbones = protflow.poses.Poses(poses=args.ref_input_json, work_dir=args.output_dir)
+            backbones = Poses(poses=args.ref_input_json, work_dir=args.output_dir)
             backbones.df["ligand_motif"] = [protflow.residues.from_dict(ligand_res_dict) for _ in range(len(backbones.df.index))] # TODO: Remove, just here for legacy
             for res_col in residue_cols:
                 if not res_col == "ligand_motif": 
                 #print([motif for motif in  backbones.df[res_col].to_list()])
-                    backbones.df[res_col] = [protflow.residues.ResidueSelection(motif, from_scorefile=True) for motif in backbones.df[res_col].to_list()]
+                    backbones.df[res_col] = [ResidueSelection(motif, from_scorefile=True) for motif in backbones.df[res_col].to_list()]
 
         backbones.set_work_dir(refinement_dir)
 
@@ -1116,7 +1011,7 @@ def main(args):
         cols = ["esm_plddt", "esm_backbone_rmsd", "esm_catres_bb_rmsd", "esm_catres_heavy_rmsd", "fastrelax_total_score", "esm_tm_sc_tm", "esm_rog", "esm_lig_contacts", "esm_ligand_clashes", "screen", "screen_decentralize_weight", "screen_decentralize_distance"]
         titles = ["ESMFold pLDDT", "ESMFold BB-Ca RMSD", "ESMFold fixed res\nBB-Ca RMSD", "ESMFold Sidechain\nRMSD", "Rosetta total_score", "SC-TM Score", "Radius of Gyration", "Ligand Contacts", "Ligand Clashes", "screen number", "decentralize weight", "decentralize distance"]
         y_labels = ["pLDDT", "Angstrom", "Angstrom", "Angstrom", "[REU]", "TM Score", "Angstrom", "#", "#", "#", "AU", "Angstrom"]
-        dims = [None, None, None, None, None, None, None, None, None, None, None, None]
+        dims = [None for col in cols]
 
         plots.violinplot_multiple_cols(
             dataframe = backbones.df,
@@ -1259,10 +1154,6 @@ def main(args):
                 copy_chain = args.ligand_chain
             )
 
-            # calculate ligand clashes and ligand contacts
-            #backbones = ligand_clash.run(poses=backbones, prefix=f"cycle_{cycle}_esm_ligand")
-            #backbones = ligand_contacts.run(poses=backbones, prefix=f"cycle_{cycle}_esm_lig")
-
             # run rosetta_script to evaluate residuewise energy
             logging.info("Relaxing poses with ligand present...")
             backbones = rosetta.run(
@@ -1350,9 +1241,9 @@ def main(args):
         # set up poses for evaluation
         if args.eval_input_json:
             logging.info(f"Reading in evaluation input poses from {args.eval_input_json}!")
-            backbones = protflow.poses.Poses(poses=args.eval_input_json)
+            backbones = Poses(poses=args.eval_input_json)
             for res_col in residue_cols:
-                backbones.df[res_col] = [protflow.residues.ResidueSelection(motif, from_scorefile=True) for motif in backbones.df[res_col].to_list()]
+                backbones.df[res_col] = [ResidueSelection(motif, from_scorefile=True) for motif in backbones.df[res_col].to_list()]
 
         last_ref_cycle = determine_last_ref_cycle(backbones.df)
         logging.info(f"Last refinement cycle determined as: {last_ref_cycle}")
@@ -1533,9 +1424,9 @@ def main(args):
 
         if args.variants_input_json:
             logging.info(f"Reading in variant generation input poses from {args.variants_input_json}!")
-            backbones = protflow.poses.Poses(poses=args.variants_input_json)
+            backbones = Poses(poses=args.variants_input_json)
             for res_col in residue_cols:
-                backbones.df[res_col] = [protflow.residues.ResidueSelection(motif, from_scorefile=True) for motif in backbones.df[res_col].to_list()]
+                backbones.df[res_col] = [ResidueSelection(motif, from_scorefile=True) for motif in backbones.df[res_col].to_list()]
         
         backbones.set_work_dir(os.path.join(args.output_dir, f"{variants_prefix}variants"))
 
@@ -1879,7 +1770,7 @@ if __name__ == "__main__":
     argparser.add_argument("--screen_decentralize_weights", type=str, default="10;20;30;40", help="Decentralize weights that should be tested during screening. Separated by ;. Only used if <model> is 'default'.")
     argparser.add_argument("--screen_decentralize_distances", type=str, default="0;2;4;6", help="Decentralize distances that should be tested during screening. Separated by ;. Only used if <model> is 'default'.")
     argparser.add_argument("--screen_input_poses", type=int, default=20, help="Number of input poses for screening. Will be picked randomly if --screen_from_top is not set.")
-    argparser.add_argument("--screen_from_top", action="store_true", help="Instead of picking screening input poses randomly, use poses with best path score.")
+    argparser.add_argument("--screen_input_selection", default="weighted", help="Can be either 'top', 'random' or 'weighted' (default). Defines if motif library input poses are chosen based on score, at random or random weighted by score.")
     argparser.add_argument("--screen_num_rfdiffusions", type=int, default=1, help="Number of backbones to generate per input path during screening.")
     argparser.add_argument("--screen_mpnn_rlx_mpnn", action="store_true", help="Instead of running LigandMPNN on RFdiffusion output and then directly predict sequences, run a MPNN-RLX-MPNN-ESM trajectory (like in refinement).")
     argparser.add_argument("--screen_substrate_contacts_weight", type=str, default="0", help="Substrate contacts potential weights that should be tested during screening. Separated by ;. Only used if <model> is 'active_site'.")
@@ -1917,10 +1808,10 @@ if __name__ == "__main__":
     argparser.add_argument("--flanking", type=str, default="split", help="How flanking should be set. Always leave on split. nterm or cterm also valid options.")
     argparser.add_argument("--flanker_length", type=int, default=30, help="Set Length of Flanking regions. For active_site model: 30 (recommended at least).")
     argparser.add_argument("--total_length", type=int, default=200, help="Total length of protein to diffuse. This includes flanker, linkers and input fragments.")
-    argparser.add_argument("--linker_length", type=str, default="auto", help="linker length, total length. How long should the linkers be, how long should the protein be in total?")
+    argparser.add_argument("--linker_length", type=str, default="auto", help="linker length, total length. How long should the linkers be?")
     argparser.add_argument("--rfdiffusion_timesteps", type=int, default=50, help="Specify how many diffusion timesteps to run. 50 recommended. don't change")
     argparser.add_argument("--model", type=str, default="default", help="{default,active_site} Choose which model to use for RFdiffusion (active site or regular model).")
-    argparser.add_argument("--channel_contig", type=str, default="Q1-21", help="RFdiffusion-style contig for chain B")
+    #argparser.add_argument("--channel_contig", type=str, default="Q1-21", help="RFdiffusion-style contig for chain B")
 
     # ligandmpnn optionals
     argparser.add_argument("--ligandmpnn_options", type=str, default=None, help="Options for ligandmpnn runs.")
@@ -1937,7 +1828,8 @@ if __name__ == "__main__":
     argparser.add_argument("--min_ligand_contacts", type=float, default=3, help="Minimum number of ligand contacts per ligand heavyatom for the design to be a success.")
     #argparser.add_argument("--keep_clashing_backbones", action="store_true", help="Set this flag if you want to keep backbones that clash with the ligand.")
     argparser.add_argument("--ligand_clash_factor", type=float, default=0.8, help="Factor for determining clashes. Set to 0 if ligand clashes should be ignored.")
-    #argparser.add_argument("--fpocket_composite_score_weight", type=float, default=0, help="Weight of fpocket pocket score when calculating composite score that is used for filtering. Default is 0.")
 
     arguments = argparser.parse_args()
+
+    
     main(arguments)
