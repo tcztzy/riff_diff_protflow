@@ -19,6 +19,7 @@ from protflow.jobstarters import SbatchArrayJobstarter, LocalJobStarter
 from protflow.utils.plotting import violinplot_multiple_cols, violinplot_multiple_cols_dfs
 from protflow.utils.utils import vdw_radii
 from protflow.utils.openbabel_tools import openbabel_fileconverter
+from protflow.poses import description_from_path
 from protflow.config import PROTFLOW_ENV
 
 
@@ -345,16 +346,6 @@ def auto_determine_rmsd_cutoff(ensemble_size):
         rmsd_cutoff = 2
     return round(rmsd_cutoff, 2)
 
-
-def create_path_name(df, order):
-
-    name = []
-    for chain in order:
-        model_num = df[df['chain_id'] == chain]['model_num'].to_list()[0]
-        name.append(f"{chain}{model_num}")
-    name = "-".join(name)
-    return name
-
 def assign_chain_letters(line):
     line_sep = line.split()
     cleaned_list = [int(s.replace('[', '').replace(',', '').replace(']', '')) for s in line_sep[2:]]
@@ -381,37 +372,8 @@ def create_motif_contig(chain_str, fragsize_str, path_order, sep):
     chains = chain_str.split(sep)
     fragsizes = fragsize_str.split(sep)
     contig = [f"{chain}1-{length}" for chain, length in zip(chains, fragsizes)]
-    contig = f"{sep}".join(sorted(contigs, key=lambda x: path_order.index(x[0])))
+    contig = f"{sep}".join(sorted(contig, key=lambda x: path_order.index(x[0])))
     return contig
-
-def compile_contig_string(series:pd.Series):
-    nterm = 20
-    cterm = 20
-    total_length = 200
-    num_gaps = len([chain for chain in series['path_order']]) - 1
-    frag_length = sum([len(series['motif_residues'][chain]) for chain in series['path_order']])
-    #gap_length = int((total_length - nterm - cterm - frag_length) / num_gaps)
-    gap_length = 10
-    contigs = [f"{chain}{series['motif_residues'][chain][0]}-{series['motif_residues'][chain][-1]}" for chain in sorted(series['path_order'])]
-    contigs = "/".join([f"{contig}/{gap_length}" for contig in contigs[:-1]]) + f"/{contigs[-1]}"
-    contig_string = f"'contigmap.contigs=[{nterm}/{contigs}/{cterm}]'"
-    return contig_string
-
-def compile_inpaint_string(series:pd.Series):
-    chains = sorted(series['path_order'])
-    inpaint = "/".join([f"{chain}{pos}" for chain in chains for pos in series['motif_residues'][chain] if not pos == series['fixed_residues'][chain][0]])
-    inpaint_string = f"'contigmap.inpaint_seq=[{inpaint}]'"
-    return inpaint_string
-
-def compile_rfdiff_pose_opts(series:pd.Series):
-    #TODO: at the moment only the first ligand is included in the rfdiffusion run, it crashes when both are added :(
-    #pose_opts = f"{compile_contig_string(series)} {compile_inpaint_string(series)} potentials.substrate=[{series['ligand_name'].split(',')[0]}]"
-    if len(series['ligand_name'].split(',')) > 1:
-        pose_opts = f"{compile_contig_string(series)} {compile_inpaint_string(series)} potentials.substrate=LIG"
-    else:
-        pose_opts = f"{compile_contig_string(series)} {compile_inpaint_string(series)} potentials.substrate={series['ligand_name']}"
-    return pose_opts
-
 
 def create_pdbs(df:pd.DataFrame, output_dir, ligand, channel_path, preserve_channel_coordinates):
     filenames = []
@@ -422,7 +384,7 @@ def create_pdbs(df:pd.DataFrame, output_dir, ligand, channel_path, preserve_chan
         frag_chains = [load_structure_from_pdbfile(path, all_models=True)[int(model)][chain] for path, model, chain in zip(paths, models, chains)]
         filename = ["".join([chain, model]) for chain, model in zip(chains, models)]
         filename = "-".join(sorted(filename, key=lambda x: row['path_order'].index(x[0]))) + ".pdb"
-        filename = os.path.join(output_dir, filename)
+        filename = os.path.abspath(os.path.join(output_dir, filename))
         struct = Structure.Structure('out')
         model = Model.Model(0)
         for frag in frag_chains:
@@ -437,61 +399,6 @@ def create_pdbs(df:pd.DataFrame, output_dir, ligand, channel_path, preserve_chan
         filenames.append(filename)
     return filenames
 
-
-def create_path_pdb_original(series:pd.Series, output_dir, ligand, channel_path, preserve_channel_coordinates):
-    #chains_models = series['path_name'].split('-')
-    chains = sorted(series['path_order'])
-    struct = Structure.Structure('out')
-    model = Model.Model(0)
-    frag_chains = [load_structure_from_pdbfile(series['pose_paths'][chain], all_models=True)[series['model_num'][chain]][series['chain_id'][chain]] for chain in chains]
-    for fragment, chain in zip(frag_chains, chains):
-        fragment.id = chain
-        model.add(fragment)
-    if len([res for res in ligand.get_residues()]) > 1:
-        ligands = copy.deepcopy(ligand)
-        for lig in ligands.get_residues():
-            lig.resname = 'LIG'
-        model.add(ligands)
-    else:
-        model.add(ligand)
-    struct.add(model)
-    # adding a channel only works if a ligand is present:
-    if channel_path and preserve_channel_coordinates == False:
-        model = add_polyala_to_pose(model, polyala_path=channel_path, polyala_chain="Q", ligand_chain='Z')
-    elif channel_path:
-        model.add(load_structure_from_pdbfile(channel_path)["Q"])
-    output_path = os.path.join(output_dir, f"{series['path_name']}.pdb")
-    save_structure_to_pdbfile(struct, output_path)
-    return output_path
-
-def combine_ligands(ligand_chain):
-    for lig in ligand_chain.get_residues():
-        lig.name = 'LIG'
-    return ligand_chain
-
-
-def create_path_series(path_df:pd.DataFrame, path_order, ligands, ligand_name, pdb_dir, channel_path, preserve_channel_coordinates):
-    path_dict = {'fixed_residues': {}, 'motif_residues': {}, 'catres_identities': {}, 'pose_paths': {}, 'original_chain_id': {}, 'model_num': {}}
-    for index, row in path_df.iterrows():
-        #TODO: this has to be done because subsequent scripts assume that first fragment is chain A, ... otherwise superpositioning does not work anymore
-        path_dict['model_num'][row['chain_id']] = row['model_num']
-        path_dict['pose_paths'][row['chain_id']] = row['poses']
-        path_dict['fixed_residues'][row['chain_id']] = [row['rotamer_pos']]
-        path_dict['motif_residues'][row['chain_id']] = [_ for _ in range(1, row['frag_length'] + 1)]
-        path_dict['catres_identities'][f"{row['chain_id']}{row['rotamer_pos']}"] = row['AAs'][row['rotamer_pos'] - 1]
-    mean_cols = ['path_score', 'ensemble_score', 'fragment_score', 'backbone_score', 'path_num_matches', 'match_score', 'rotamer_probability', 'rotamer_score']
-
-    series = path_df[mean_cols].mean()
-    for col in path_dict:
-        series[col] = path_dict[col]
-    series['path_order'] = path_order
-    ser = {chain: "ac" for chain in "sdf"}
-    series['path_name'] = create_path_name(path_df, path_order)
-    series['ligand_name'] = ligand_name
-    series['ligand_chain'] = 'Z'
-    series['pose'] = create_path_pdb(series, pdb_dir, ligands, channel_path, preserve_channel_coordinates)
-    series['covalent_bonds'] = create_covalent_bonds(path_df)
-    return series
 
 def chain_alphabet():
     return ['A', 'B', 'C', 'D', 'E', 'F', 'G', 'H', 'I', 'J', 'K', 'L', 'M', 'N', 'O', 'P', 'Q', 'R', 'S', 'T', 'U', 'V', 'W', 'X', 'Y']
@@ -639,7 +546,7 @@ def main(args):
     '''
 
     # create output directory
-    working_dir = os.path.join(args.working_dir, "motif_library_assembly")
+    working_dir = os.path.join(args.working_dir, f"{args.output_prefix}_motif_library_assembly")
     os.makedirs(working_dir, exist_ok=True)
 
     # set up logging
@@ -659,7 +566,7 @@ def main(args):
     channels_dir = os.path.join(database_dir, "channel_placeholder")
 
     # check if output already exists
-    out_json = os.path.join(working_dir, f'{args.output_prefix}_assembly.json')
+    out_json = os.path.join(args.working_dir, f'{args.output_prefix}_selected_paths.json')
     if os.path.exists(out_json):
         logging.error(f'Output file already exists at {out_json}!')
         raise RuntimeError(f'Output file already exists at {out_json}!')
@@ -679,6 +586,7 @@ def main(args):
             channel.id = "Q"
             for index, residue in enumerate(channel.get_residues()):
                 residue.id = (residue.id[0], index + 1, residue.id[2])
+            channel_size = index + 1
             channel_path = os.path.join(working_dir, "channel_placeholder.pdb")
             save_structure_to_pdbfile(channel, channel_path)
         else:
@@ -743,7 +651,6 @@ def main(args):
         df_list.append(pose_df)
 
     ligands = struct[0]['Z']
-    lig_names = ','.join([res.get_resname() for res in ligands.get_residues()])
     for res in ligands.get_residues():
         res.id = ("H", res.id[1], res.id[2])
 
@@ -791,13 +698,11 @@ def main(args):
     log_and_print(f"Plotting data at {plotpath}.")
     dfs = [post_clash.groupby('ensemble_num', sort=False).mean(numeric_only=True), score_df]
     df_names = ['filtered', 'unfiltered']
-    cols = ['ensemble_score', 'fragment_score', 'backbone_score', 'rotamer_score']
-    col_names = ['ensemble score', 'mean fragment score', 'mean backbone score', 'mean rotamer score']
-    y_labels = ['score [AU]', 'score [AU]', 'score [AU]', 'score [AU]']
-    dims = [(-0.05, 1.05), (-0.05, 1.05), (-0.05, 1.05), (-0.05, 1.05)]
-    #violinplot_multiple_cols_dfs(dfs=dfs, df_names=df_names, cols=cols, titles=col_names, y_labels=y_labels, dims=dims, out_path=plotpath, show_fig=False)
+    cols = ['backbone_probability', 'rotamer_probability', 'phi_psi_occurrence']
+    col_names = ['mean backbone probability', 'mean rotamer probability', 'mean phi psi occurrence']
+    y_labels = ['probability', 'probability', 'probability', 'probability']
+    violinplot_multiple_cols_dfs(dfs=dfs, df_names=df_names, cols=cols, titles=col_names, y_labels=y_labels, out_path=plotpath, show_fig=False)
 
-    
     if args.run_master:
 
         ######################## RUN MASTER ###############################
@@ -890,7 +795,7 @@ def main(args):
     # select top n paths
     log_and_print(f"Selecting top {args.max_out} paths...")
     top_path_dfs = sort_dataframe_groups_by_column(df=path_dfs, group_col="path_name", sort_col="path_score", ascending=False, filter_top_n=args.max_out)
-    log_and_print(f"Found {len(top_path_dfs.index)/len(chains)} paths.")
+    log_and_print(f"Found {int(len(top_path_dfs.index)/len(chains))} paths.")
 
     # create path dataframe
     log_and_print(f"Creating path dataframe...")
@@ -900,40 +805,37 @@ def main(args):
                  'rotamer_pos':concat_columns, 
                  'frag_length': concat_columns, 
                  'path_score': 'mean', 
-                 'match_score': 'mean',
-                 'ensemble_score': 'mean', 
-                 'path_num_matches': 'mean',
-                 'fragment_score': concat_columns, 
-                 'backbone_score': [("backbone_score", concat_columns), ("backbone_score_mean", "mean")],
-                 'rotamer_score': [("rotamer_score", concat_columns), ("rotamer_score_mean", "mean")],
-                 'rotamer_probability': [("rotamer_probability", concat_columns), ("rotamer_probability_mean", "mean")]}
+                 'backbone_probability': [("backbone_probability", concat_columns), ("backbone_probability_mean", "mean")],
+                 'rotamer_probability': [("rotamer_probability", concat_columns), ("rotamer_probability_mean", "mean")],
+                 'phi_psi_occurrence': [("phi_psi_occurrence", concat_columns), ("phi_psi_occurrence_mean", "mean")]},
+
     selected_paths = top_path_dfs.groupby('path_name', sort=False).agg(aggregate).reset_index(names=["path_name"])
     selected_paths.columns = ['path_name', 'poses', 'chain_id', 'model_num', 'rotamer_pos', 'frag_length',
-                               'path_score', 'match_score', 'ensemble_score', 'path_num_matches', 'fragment_score',
-                               'rotamer_score', 'backbone_score', 'backbone_score_mean', 'rotamer_score_mean', 
-                               'rotamer_probability', 'rotamer_probability_mean']
+                               'path_score', 'backbone_probability', 'backbone_probability_mean', 'rotamer_probability',
+                               'rotamer_probability_mean''phi_psi_occurrence', 'phi_psi_occurrence_mean']
     
     selected_paths["fixed_residues"] = selected_paths.apply(lambda row: split_str_to_dict(row['chain_id'], row['rotamer_pos'], sep=","), axis=1)
     selected_paths["motif_residues"] = selected_paths.apply(lambda row: create_motif_residues(row['chain_id'], row['frag_length'], sep=","), axis=1)
-    selected_paths["motif_contigs"] = selected_paths.apply(lambda row: create_motif_contig(row['chain_id'], row['frag_length'], sep=","), axis=1)
     selected_paths["path_order"] = selected_paths['path_name'].str.split('_').str[-1]
+    selected_paths["motif_contigs"] = selected_paths.apply(lambda row: create_motif_contig(row['chain_id'], row['frag_length'], row['path_order'], sep=","), axis=1)
+    if channel_path:
+        selected_paths["channel_contig"] = selected_paths.apply(lambda row: create_motif_contig("Q", channel_size, "Q", sep=","), axis=1)
 
     # combine multiple ligands into one for rfdiffusion
-    if len([lig for lig in ligands.get_residues()]) > 1:
-        ligand = copy.deepcopy(ligands)
-        for lig in ligands.get_residues():
-            lig.resname = "LIG"
-    else:
-        ligand = ligands
+    ligand = copy.deepcopy(ligands)
+    for lig in ligand.get_residues():
+        lig.resname = "LIG"
 
     lib_path = os.path.join(working_dir, "motif_library")
     log_and_print(f"Writing motif library .pdbs to {lib_path}")
     os.makedirs(lib_path, exist_ok=True)
     selected_paths["poses"] = create_pdbs(selected_paths, lib_path, ligand, channel_path, args.preserve_channel_coordinates)
+    selected_paths["input_poses"] = selected_paths["poses"]
+    selected_paths["poses_description"] = selected_paths.apply(lambda row: description_from_path(row['poses']), axis=1)
 
-    paths_path = os.path.join(working_dir, "selected_paths.json")
-    log_and_print(f"Writing data to {paths_path}")
-    selected_paths.to_json(paths_path)
+
+    log_and_print(f"Writing data to {out_json}")
+    selected_paths.to_json(out_json)
 
     ligand_dir = os.path.join(working_dir, 'ligand')
     os.makedirs(ligand_dir, exist_ok=True)
@@ -950,19 +852,7 @@ def main(args):
         else:
             log_and_print(f"Ligand at {ligand_pdbfile} contains less than 3 atoms. No Rosetta Params file can be written for it.")
 
-    #violinplot_multiple_cols(selected_paths, cols=['path_score', 'match_score', 'path_num_matches', 'ensemble_score', 'fragment_score', 'backbone_score', 'rotamer_score', 'rotamer_probability'], titles=['path score', 'master score', f'matches', 'ensemble score', 'mean fragment score', 'mean backbone score', 'mean rotamer score', 'mean rotamer\nprobability'], y_labels=['AU', 'AU', '#', 'AU', 'AU', 'AU', 'AU', 'probability'], dims=[(-0.05, 1.05), (-0.05, 1.05), (0 - selected_paths['path_num_matches'].max() * 0.05, selected_paths['path_num_matches'].max() * 1.05), (-0.05, 1.05), (-0.05, 1.05), (-0.05, 1.05), (-0.05, 1.05), (-0.05, 1.05)], out_path=os.path.join(working_dir, f"{args.output_prefix}_selected_paths_info.png"), show_fig=False)
-
-    """
-    
-    dfs = [top_path_dfs, path_dfs]
-    df_names = ['selected paths', '> match cutoff']
-    cols = ['path_score', 'match_score', 'ensemble_score', 'fragment_score', 'backbone_score', 'rotamer_score']
-    col_names = ['path score', 'master score', 'ensemble score', 'fragment score', 'backbone score', 'rotamer score']
-    y_labels = ['score [AU]' for _ in cols]
-    dims = [(-0.05, 1.05) for _ in cols]
-    plotpath = os.path.join(working_dir, f"{args.output_prefix}_top_paths_filter.png")
-    violinplot_multiple_cols_dfs(dfs, df_names=df_names, cols=cols, titles=col_names, y_labels=y_labels, dims=dims, out_path=plotpath, show_fig=False)
-    """
+    violinplot_multiple_cols(selected_paths, cols=['backbone_probability_mean', 'phi_psi_occurrence_mean', 'rotamer_probability_mean'], titles=['mean backbone\nprobability', 'mean phi/psi\nprobability' 'mean rotamer\nprobability'], y_labels=['probability', 'probability', 'probability'], out_path=os.path.join(working_dir, f"{args.output_prefix}_selected_paths_info.png"), show_fig=False)
 
     log_and_print(f'Done!')
 
