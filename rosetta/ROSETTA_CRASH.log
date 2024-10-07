@@ -1,0 +1,301 @@
+##############################################################################################################
+#
+# Rosetta crash log. Please submit the contents of this file to http://crash.rosettacommons.org/
+# or use the script Rosetta/main/source/scripts/python/public/report_crashes.py
+#
+
+[START_CRASH_REPORT]
+[ROSETTA_VERSION]: 2021.16+release.8ee4f02
+[COMMIT_DATE]: 2021-04-20T20:52:25.363712
+[APPLICATION]: /home/markus/Rosetta/main/source/bin/rosetta_scripts.static.linuxgccrelease
+[MODE]: Release
+[EXTRAS]: default
+[OS]: GNU/Linux
+[COMPILER]: GCC version "4.8.5 20150623 (Red Hat 4.8.5-39)"
+[STDLIB]: libstdc++ version 20150623
+[START_OPTIONS]
+ -in:file:s=testing/C40-A19-D16-B22_0020_0015_0002.pdb -in:file:native=testing/C40-A19-D16-B22_0020_0015.pdb -out:overwrite -out:path:all=test_outs/ -parser:protocol=refine.xml -parser:script_vars=motif_res=20,21,22,23,24,25,26,37,38,39,40,41,42,43,50,51,52,53,54,55,56,66,67,68,69,70,71,72 cat_res=25,39,52,69 -corrections:beta
+
+[END_OPTIONS]
+
+[START_BACKTRACE]: RAW_LIBC
+[0x63c9650]
+[0x63c83d3]
+[0x6473556]
+[0x2819398]
+[0x3a29419]
+[0x3ae1b5a]
+[0x3ae6666]
+[0x3ae8304]
+[0x3aecc4a]
+[0x3b695c6]
+[0x3b6ab11]
+[0x3c06ba8]
+[0x41976e]
+[0x6beae64]
+[0x6beb0e1]
+[0x651b96]
+
+[END_BACKTRACE]
+
+[FILE]: src/protocols/monte_carlo/GenericMonteCarloMover.cc
+[LINE]: 1015
+[START_MESSAGE]
+[ ERROR ] UtilityExitException
+ERROR: You need to set filter_nam2e or scorefxn_name for MC criteria.
+
+
+
+[END_MESSAGE]
+[END_CRASH_REPORT]
+
+##############################################################################################################
+#
+# Rosetta crash log. Please submit the contents of this file to http://crash.rosettacommons.org/
+# or use the script Rosetta/main/source/scripts/python/public/report_crashes.py
+#
+
+[START_CRASH_REPORT]
+[ROSETTA_VERSION]: 2021.16+release.8ee4f02
+[COMMIT_DATE]: 2021-04-20T20:52:25.363712
+[APPLICATION]: /home/markus/Rosetta/main/source/bin/rosetta_scripts.static.linuxgccrelease
+[MODE]: Release
+[EXTRAS]: default
+[OS]: GNU/Linux
+[COMPILER]: GCC version "4.8.5 20150623 (Red Hat 4.8.5-39)"
+[STDLIB]: libstdc++ version 20150623
+[START_OPTIONS]
+ -in:file:s=testing/C40-A19-D16-B22_0020_0015_0002.pdb -in:file:native=testing/C40-A19-D16-B22_0020_0015.pdb -out:overwrite -out:path:all=test_outs/ -parser:protocol=refine.xml -parser:script_vars=motif_res=20,21,22,23,24,25,26,37,38,39,40,41,42,43,50,51,52,53,54,55,56,66,67,68,69,70,71,72 cat_res=25,39,52,69 -corrections:beta
+
+[END_OPTIONS]
+
+[START_BACKTRACE]: RAW_LIBC
+[0x63c9650]
+[0x63c83d3]
+[0x55ac211]
+[0x55ab974]
+[0x55a0e44]
+[0x26cf2a6]
+[0x3acbc2a]
+[0x3acc9f4]
+[0x3acd50e]
+[0x3b68eec]
+[0x3b6ab11]
+[0x3c06ba8]
+[0x41976e]
+[0x6beae64]
+[0x6beb0e1]
+[0x651b96]
+
+[END_BACKTRACE]
+
+[FILE]: src/core/simple_metrics/util.cc
+[LINE]: 286
+[START_MESSAGE]
+
+
+SimpleMetric error! 
+ The data of type SelectedResiduesPyMOLMetric with data output tag pymol_selection already exists! 
+Please use the prefix/suffix settings or set a custom_type for the metric.
+  See the documentation for more:
+  https://www.rosettacommons.org/docs/latest/scripting_documentation/RosettaScripts/SimpleMetrics/SimpleMetrics#effective-use-of-simplemetrics.
+ Note: If this was intentional, please set the override option to true in RunSimpleMetricsMover
+
+
+
+[END_MESSAGE]
+[END_CRASH_REPORT]
+
+##############################################################################################################
+#
+# Rosetta crash log. Please submit the contents of this file to http://crash.rosettacommons.org/
+# or use the script Rosetta/main/source/scripts/python/public/report_crashes.py
+#
+
+[START_CRASH_REPORT]
+[ROSETTA_VERSION]: 2021.16+release.8ee4f02
+[COMMIT_DATE]: 2021-04-20T20:52:25.363712
+[APPLICATION]: /home/markus/Rosetta/main/source/bin/rosetta_scripts.static.linuxgccrelease
+[MODE]: Release
+[EXTRAS]: default
+[OS]: GNU/Linux
+[COMPILER]: GCC version "4.8.5 20150623 (Red Hat 4.8.5-39)"
+[STDLIB]: libstdc++ version 20150623
+[START_OPTIONS]
+ -in:file:s=testing/C40-A19-D16-B22_0020_0015_0002.pdb -in:file:native=testing/C40-A19-D16-B22_0020_0015.pdb -out:overwrite -out:path:all=test_outs/ -parser:protocol=refine.xml -parser:script_vars=motif_res=20,21,22,23,24,25,26,37,38,39,40,41,42,43,50,51,52,53,54,55,56,66,67,68,69,70,71,72 cat_res=25,39,52,69 -corrections:beta
+
+[END_OPTIONS]
+
+[START_BACKTRACE]: RAW_LIBC
+[0x63c9650]
+[0x63c83d3]
+[0x3aead02]
+[0x3aeb682]
+[0x3aebc7b]
+[0x3aec3c0]
+[0x3aecbdd]
+[0x3b695c6]
+[0x3b6ab11]
+[0x3c06ba8]
+[0x41976e]
+[0x6beae64]
+[0x6beb0e1]
+[0x651b96]
+
+[END_BACKTRACE]
+
+[FILE]: src/protocols/rosetta_scripts/RosettaScriptsParser.cc
+[LINE]: 1207
+[START_MESSAGE]
+Input rosetta scripts XML file "refine.xml" failed to validate against the rosetta scripts schema. Use the option -parser::output_schema <output filename> to output the schema to a file to see all valid options.
+Your XML has failed validation.  The error message below will tell you where in your XML file the error occurred.  Here's how to fix it:
+
+1) If the validation fails on something obvious, like an illegal attribute due to a spelling error (perhaps you used scorefnction instead of scorefunction), then you need to fix your XML file.
+2) If you haven't run the XML rewriter script and this might be pre-2017 Rosetta XML, run the rewriter script (tools/xsd_xrw/rewrite_rosetta_script.py) on your input XML first.  The attribute values not being in quotes (scorefunction=talaris2014 instead of scorefunction="talaris2014") is a good indicator that this is your problem.
+3) If you are a developer and neither 1 nor 2 worked - email the developer's mailing list or try Slack.
+4) If you are an academic or commercial user - try the Rosetta Forums https://www.rosettacommons.org/forum
+
+
+Error messages were:
+From line 17:
+Error: Element 'CloseContactResidueSelector': This element is not expected.
+
+12: 		<Index name="motif" resnums="20,21,22,23,24,25,26,37,38,39,40,41,42,43,50,51,52,53,54,55,56,66,67,68,69,70,71,72" />
+13: 		<Index name="catres" resnums="25,39,52,69" />
+14: 		<Layer name="surface" select_core="false" select_boundary="false" select_surface="true" />
+15: 		<Neighborhood name="catres_neighbors_designable" selector="catres" distance="7" include_focus_in_subset="false" />
+16: 		<Neighborhood name="catres_neighbors_packable" selector="catres" distance="10" include_focus_in_subset="true" />
+17: 		<CloseContactResidueSelector name="catres_cc" residue_selector="catres" contact_threshold="4.5"/>
+18: 		<Not name="no_pack_res" selector="catres_neighbors_packable" />
+19: 		<Not name="no_design_res" selector="catres_neighbors_designable" />
+20: 		<Or name="mpnn_fixedres" selectors="catres,catres_neighbors_designable"/>
+21: 	</RESIDUE_SELECTORS>
+22: 	<SIMPLE_METRICS>
+------------------------------------------------------------
+Warning messages were:
+------------------------------------------------------------
+
+
+[END_MESSAGE]
+[END_CRASH_REPORT]
+
+##############################################################################################################
+#
+# Rosetta crash log. Please submit the contents of this file to http://crash.rosettacommons.org/
+# or use the script Rosetta/main/source/scripts/python/public/report_crashes.py
+#
+
+[START_CRASH_REPORT]
+[ROSETTA_VERSION]: 2021.16+release.8ee4f02
+[COMMIT_DATE]: 2021-04-20T20:52:25.363712
+[APPLICATION]: /home/markus/Rosetta/main/source/bin/rosetta_scripts.static.linuxgccrelease
+[MODE]: Release
+[EXTRAS]: default
+[OS]: GNU/Linux
+[COMPILER]: GCC version "4.8.5 20150623 (Red Hat 4.8.5-39)"
+[STDLIB]: libstdc++ version 20150623
+[START_OPTIONS]
+ -in:file:s=testing/C40-A19-D16-B22_0020_0015_0002.pdb -in:file:native=testing/C40-A19-D16-B22_0020_0015.pdb -out:overwrite -out:path:all=test_outs/ -parser:protocol=refine.xml -parser:script_vars=motif_res=20,21,22,23,24,25,26,37,38,39,40,41,42,43,50,51,52,53,54,55,56,66,67,68,69,70,71,72 cat_res=25,39,52,69 -corrections:beta
+
+[END_OPTIONS]
+
+[START_BACKTRACE]: RAW_LIBC
+[0x63c9650]
+[0x63c83d3]
+[0x3aead02]
+[0x3aeb682]
+[0x3aebc7b]
+[0x3aec3c0]
+[0x3aecbdd]
+[0x3b695c6]
+[0x3b6ab11]
+[0x3c06ba8]
+[0x41976e]
+[0x6beae64]
+[0x6beb0e1]
+[0x651b96]
+
+[END_BACKTRACE]
+
+[FILE]: src/protocols/rosetta_scripts/RosettaScriptsParser.cc
+[LINE]: 1207
+[START_MESSAGE]
+Input rosetta scripts XML file "refine.xml" failed to validate against the rosetta scripts schema. Use the option -parser::output_schema <output filename> to output the schema to a file to see all valid options.
+Your XML has failed validation.  The error message below will tell you where in your XML file the error occurred.  Here's how to fix it:
+
+1) If the validation fails on something obvious, like an illegal attribute due to a spelling error (perhaps you used scorefnction instead of scorefunction), then you need to fix your XML file.
+2) If you haven't run the XML rewriter script and this might be pre-2017 Rosetta XML, run the rewriter script (tools/xsd_xrw/rewrite_rosetta_script.py) on your input XML first.  The attribute values not being in quotes (scorefunction=talaris2014 instead of scorefunction="talaris2014") is a good indicator that this is your problem.
+3) If you are a developer and neither 1 nor 2 worked - email the developer's mailing list or try Slack.
+4) If you are an academic or commercial user - try the Rosetta Forums https://www.rosettacommons.org/forum
+
+
+Error messages were:
+Error: Attribute name redefined
+
+54: 			<CoordinateConstraintGenerator name="set_bb_ca_constraint" residue_selector="motif" native="false" ca_only="true" />
+55: 		</AddConstraints>
+56: 		<AddConstraints name="add_cat_res_cst" >
+57: 			<CoordinateConstraintGenerator name="set_cat_res_constraint" residue_selector="catres" native="true" sidechain="true" align_reference="true" />
+58: 		</AddConstraints>
+59: 		<RemoveConstraints name="rm_bb_ca_cst" name="set_bb_ca_constraint" /> 
+60: 		<FastDesign name="fastdesign_cst" scorefxn="beta_cst" task_operations="restrict_surface_to_repacking,restrict_catres_to_repacking" />
+61: 		<PackRotamersMover name="pack_catres" scorefxn="beta_cst" nloop="25" task_operations="prevent_design,prevent_noncatres_repacking" />,prevent_design" />
+62: 		<MinMover name="catres_min" jump="0" chi="0" bb="0" scorefxn="beta_cst" >
+63: 			<MoveMap name="mm1" bb="0" chi="0" jump="0" >
+64: 				<ResidueSelector selector="mpnn_fixedres" chi="1" bb="1" />
+------------------------------------------------------------
+Warning messages were:
+------------------------------------------------------------
+
+
+[END_MESSAGE]
+[END_CRASH_REPORT]
+
+##############################################################################################################
+#
+# Rosetta crash log. Please submit the contents of this file to http://crash.rosettacommons.org/
+# or use the script Rosetta/main/source/scripts/python/public/report_crashes.py
+#
+
+[START_CRASH_REPORT]
+[ROSETTA_VERSION]: 2021.16+release.8ee4f02
+[COMMIT_DATE]: 2021-04-20T20:52:25.363712
+[APPLICATION]: /home/markus/Rosetta/main/source/bin/rosetta_scripts.static.linuxgccrelease
+[MODE]: Release
+[EXTRAS]: default
+[OS]: GNU/Linux
+[COMPILER]: GCC version "4.8.5 20150623 (Red Hat 4.8.5-39)"
+[STDLIB]: libstdc++ version 20150623
+[START_OPTIONS]
+ -in:file:s=testing/D1-C34-A12-B2_0013_0001_0001_0001_0062_0002.pdb -in:file:native=testing/ref_frag/D1-C34-A12-B2_0013_0001_0001_0001_0062_0002.pdb -out:overwrite -out:path:all=test_outs/ -parser:protocol=fd_refine.xml -parser:script_vars=sd=4.5 motif_res=4,5,6,7,8,9,10,68,69,70,71,72,73,74,93,94,95,96,97,98,99,157,158,159,160,161,162,163 cat_res=5,73,95,158 input_res=151,158,193,152,155,72,196,198,8,70,99,69,9,197,74,200,5,194,73,96,154,102,95 -corrections:beta
+
+[END_OPTIONS]
+
+[START_BACKTRACE]: RAW_LIBC
+[0x63c9650]
+[0x63c83d3]
+[0x5099637]
+[0x3a6d229]
+[0x3a61e91]
+[0x3acbc2a]
+[0x3acc9f4]
+[0x3acd50e]
+[0x3b68eec]
+[0x3b6ab11]
+[0x3c06ba8]
+[0x41976e]
+[0x6beae64]
+[0x6beb0e1]
+[0x651b96]
+
+[END_BACKTRACE]
+
+[FILE]: src/core/select/residue_selector/ResidueIndexSelector.cc
+[LINE]: 124
+[START_MESSAGE]
+Residue 68 not found in pose!
+
+
+[END_MESSAGE]
+[END_CRASH_REPORT]
+

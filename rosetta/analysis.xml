@@ -1,0 +1,56 @@
+<ROSETTASCRIPTS>
+	<SCOREFXNS>
+		<ScoreFunction name="r15" weights="ref2015" />
+	</SCOREFXNS>
+	<RESIDUE_SELECTORS>
+		<Index name="catres" resnums="%%cat_res%%" />
+		<Index name="motif" resnums="%%motif_res%%" />
+		<ResiduePropertySelector name="protein" properties="CANONICAL_AA" />
+		<Not name="ligand" selector="protein" />
+		<Or name="catres_lig" selectors="catres,ligand" />
+		<Not name="not_ala_gly" >
+			<ResidueName residue_name3="ALA,GLY" />
+		</Not>
+		<And name="boltz_subset" selectors="not_ala_gly,catres" />
+	</RESIDUE_SELECTORS>
+	<SIMPLE_METRICS>
+		<InteractionEnergyMetric name="lig_int_score" force_rescore="false" residue_selector="protein" residue_selector2="ligand" scorefxn="r15" />
+		<SasaMetric name="total_sasa" />
+		<SapScoreMetric name="total_sap" />
+		RMSDMetric name="lig_rmsd" custom_type="lig" residue_selector="ligand" residue_selector_super="catres" use_native="true" super="true" rmsd_type="rmsd_all_heavy" />
+		RMSDMetric name="catres_sc_rmsd" custom_type="cat_sc" residue_selector="catres" use_native="true" super="true" rmsd_type="rmsd_sc_heavy" />
+		RMSDMetric name="catres_bb_rmsd" custom_type="cat_bb" residue_selector="catres" use_native="true" super="true" rmsd_type="rmsd_protein_bb_heavy" />
+	</SIMPLE_METRICS>
+	<RESIDUE_LEVEL_TASK_OPERATIONS>
+        <PreventRepackingRLT name="PreventRepacking" />
+        <RestrictToRepackingRLT name="RestrictToRepacking" />
+	</RESIDUE_LEVEL_TASK_OPERATIONS>
+	<TASKOPERATIONS>
+		<LimitAromaChi2 name="arolimit" chi2max="110" chi2min="70" include_trp="true" />
+		<ExtraRotamersGeneric name="extrachi" ex1="1" ex2="1" ex1aro="1" ex2aro="1" extrachi_cutoff="0" />
+		<InitializeFromCommandline name="initialize" />
+		<IncludeCurrent name="current_rot" />
+	</TASKOPERATIONS>
+	<FILTERS>
+		<DSasa name="lig_delta_sasa" lower_threshold="0.0" upper_threshold="1.0"/>
+		<RotamerBoltzmannWeight2 name="rotprob" residue_selector="catres" scorefxn="r15" />
+		Torsion name="cat_res_torsion" lower="-360" upper="360" resnum="%%cat_res%%"/>
+		<ShapeComplementarity name="lig_shape_comp" min_sc="0" min_interface="0" residue_selector1="protein" residue_selector2="ligand" />
+	</FILTERS>
+	<MOVERS>
+		ConvertRealToVirtualMover name="virt" residue_selector="catres" />
+		<FastRelax name="relax" />
+		<RunSimpleMetrics name="run_metrics" metrics="lig_int_score,total_sasa,total_sap" />
+	</MOVERS>
+	<APPLY_TO_POSE>
+	</APPLY_TO_POSE>
+	<PROTOCOLS>
+		<Add mover="relax" />
+		<Add filter="lig_delta_sasa" />
+		<Add filter="rotprob" />
+		Add filter="cat_res_torsion" />
+		<Add filter="lig_shape_comp" />
+		<Add mover="run_metrics" />
+	</PROTOCOLS>
+	<OUTPUT scorefxn="r15" />
+  /</ROSETTASCRIPTS>

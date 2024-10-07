@@ -1,0 +1,89 @@
+<ROSETTASCRIPTS>
+	This script is supposed to be run after sequence generation with ProteinMPNN.
+	It threads a sequence onto the input protein backbone (That you have to specify), then relaxes it and calculates a lot of metrics.
+	<SCOREFXNS>
+		<ScoreFunction name="beta" weights="beta"/>
+		<ScoreFunction name="beta_cst" weights="beta_cst" />
+	</SCOREFXNS>
+	<RESIDUE_SELECTORS>
+		Index name="motif" resnums="%%motif_idx%%" error_on_out_of_bounds_index="false"/>	
+		<Layer name="core_res" select_core="true" />
+		<Layer name="surface" select_surface="true" />
+		<Not name="not_surface_res" selector="surface" />
+		<Index name="motif" resnums="%%motif_res%%" />
+		<Index name="catres" resnums="%%cat_res%%" />
+		<Index name="res1" resnums="1" />
+		<Index name="last" resnums="1" reverse="true" />
+		<Or name="1andcatres" selectors="res1,catres,last" />
+		<Not name="not_catres" selector="1andcatres" />
+		<Not name="not_catres2" selector="catres" />
+	</RESIDUE_SELECTORS>
+	<TASKOPERATIONS>
+	    <OperateOnResidueSubset name="design_surface" selector="not_surface_res" > # look at residue selectors: Ligand is allowed to repack!
+                    <PreventRepackingRLT />
+	    </OperateOnResidueSubset>
+                <OperateOnResidueSubset name="restrict_surface_to_repacking" selector="surface" >
+                        <RestrictToRepackingRLT />
+		</OperateOnResidueSubset>
+		<OperateOnResidueSubset name="restrict_catres_to_repacking" selector="catres" >
+                        <RestrictToRepackingRLT />
+                </OperateOnResidueSubset>
+                <OperateOnResidueSubset name="no_design" selector="not_catres2" >
+                        <RestrictToRepackingRLT />
+		</OperateOnResidueSubset>
+	</TASKOPERATIONS>
+	<MOVE_MAP_FACTORIES>
+	</MOVE_MAP_FACTORIES>
+	<SIMPLE_METRICS>
+		<RMSDMetric name="bb_heavy_rmsd" custom_type="bb_heavy" rmsd_type="rmsd_protein_bb_heavy" reference_name="start_pose" super="true"/>
+		<RMSDMetric name="bb_ca_rmsd" custom_type="bb_ca" rmsd_type="rmsd_protein_bb_ca" reference_name="start_pose" super="true"/>
+			RMSDMetric name="af_motif_rmsd" custom_type="af_fixedB_heavy" rmsd_type="rmsd_sc_heavy" reference_name="start_pose" residue_selector="fixedB" super="true" />
+		<SequenceMetric name="core_aminoacids" residue_selector="core_res" custom_type="core_" />
+		<SequenceMetric name="surface_aminoacids" residue_selector="surface" custom_type="surface" />
+	</SIMPLE_METRICS>
+	<FILTERS>
+		<PackStat name="packstat" threshold="0" repeats="5" />
+		<ExposedHydrophobics name="exposed_hydrophobics" threshold="-1" />
+		<NetCharge name="netcharge_total" />
+		<NetCharge name="netcharge_surface" task_operations="design_surface" />
+	</FILTERS>
+	<MOVERS>
+		<MutateResidue name="mutate_to_ala" residue_selector="not_catres" new_res="ALA" preserve_atom_coords="false" />
+		<PyMOLMover name="pmm" keep_history="1" />
+		<VirtualRoot name="set_virtual_root" />
+		<AddConstraints name="add_ca_motif_cst" >
+                <CoordinateConstraintGenerator name="set_ca_motif_constraint" residue_selector="motif" native="true" ca_only="true" align_reference="true" />
+		</AddConstraints>
+		<AddConstraints name="add_bb_ca_cst" >
+                        <CoordinateConstraintGenerator name="set_bb_ca_constraint" residue_selector="motif" native="false" ca_only="true" sd="%%sd%%"/>
+		</AddConstraints>
+		<AddConstraints name="add_cat_res_cst" >
+			<CoordinateConstraintGenerator name="set_cat_res_constraint" residue_selector="catres" native="true" sidechain="true" align_reference="true" />
+		</AddConstraints>
+		<RemoveConstraints name="rm_bb_ca_cst" constraint_generators="set_bb_ca_constraint" />
+		<SavePoseMover name="save_start_pose" restore_pose="0" reference_name="start_pose" />
+		<FastRelax name="fastrelax" scorefxn="beta_cst" />
+		<FastDesign name="fastdesign" scorefxn="beta_cst" task_operations="restrict_surface_to_repacking,restrict_catres_to_repacking,no_design" />
+		<SimpleThreadingMover name="thread_sequence" pack_neighbors="false" start_position="1" thread_sequence="%%seq%%" scorefxn="beta" pack_rounds="1" />
+		<RunSimpleMetrics name="rmsd_metrics" metrics="bb_heavy_rmsd,bb_ca_rmsd" />
+	</MOVERS>
+	<PROTOCOLS>
+		<Add mover_name="set_virtual_root" />
+		<Add mover_name="add_ca_motif_cst" />
+		<Add mover_name="add_bb_ca_cst" />
+		<Add mover_name="pmm" />
+		Add mover_name="mutate_to_ala" />
+		Add mover_name="thread_sequence" />
+		<Add mover_name="add_cat_res_cst" />
+		<Add mover_name="pmm" />
+		<Add mover_name="fastrelax" />
+		<Add mover_name="pmm" />
+		<Add mover_name="rm_bb_ca_cst" />
+		<Add mover_name="fastrelax" />
+		<Add mover_name="pmm" />
+		Add filter_name="packstat" />
+		Add filter_name="exposed_hydrophobics" />
+		Add filter_name="netcharge_total" />
+	</PROTOCOLS>
+	<OUTPUT scorefxn="beta" />
+</ROSETTASCRIPTS>
