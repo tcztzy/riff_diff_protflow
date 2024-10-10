@@ -1,3 +1,5 @@
+#!/home/tripp/mambaforge/envs/protflow_new/bin/python
+
 import os
 import sys
 import itertools
@@ -9,7 +11,6 @@ import Bio.PDB
 from Bio.PDB import Structure, Model
 import pandas as pd
 import numpy as np
-from openbabel import openbabel
 import shutil
 
 # import protflow
@@ -17,22 +18,9 @@ from protflow.utils.biopython_tools import load_structure_from_pdbfile, save_str
 from protflow.jobstarters import SbatchArrayJobstarter, LocalJobStarter
 from protflow.utils.plotting import violinplot_multiple_cols, violinplot_multiple_cols_dfs
 from protflow.utils.utils import vdw_radii
+from protflow.utils.openbabel_tools import openbabel_fileconverter
+from protflow.config import PROTFLOW_ENV
 
-
-def obabel_fileconverter(input_file: str, output_file:str=None, input_format:str="pdb", output_format:str="mol2") -> None:
-    '''converts pdbfile to mol2-file.'''
-    # Create an Open Babel molecule object
-    mol = openbabel.OBMol()
-
-    # Read the PDB file
-    obConversion = openbabel.OBConversion()
-    obConversion.SetInFormat(input_format)
-    obConversion.ReadFile(mol, input_file)
-
-    # Convert the molecule to the desired output format (Mol2 file)
-    obConversion.SetOutFormat(output_format)
-    obConversion.WriteFile(mol, output_file or input_file)
-    return output_file or input_file
 
 
 def identify_rotamer_by_bfactor_probability(entity):
@@ -57,7 +45,6 @@ def distance_detection(entity1, entity2, bb_only:bool=True, ligand:bool=False, c
     database: path to database directory
     '''
     backbone_atoms = ['CA', 'C', 'N', 'O', 'H']
-    vdw_radii = vdw_radii()
     if bb_only == True and ligand == False:
         entity1_atoms = (atom for atom in entity1.get_atoms() if atom.name in backbone_atoms)
         entity2_atoms = (atom for atom in entity2.get_atoms() if atom.name in backbone_atoms)
@@ -79,7 +66,7 @@ def distance_detection(entity1, entity2, bb_only:bool=True, ligand:bool=False, c
         distance = atom_combination[0] - atom_combination[1]
         element1 = atom_combination[0].element
         element2 = atom_combination[1].element
-        clash_detection_limit = clash_detection_vdw_multiplier * (vdw_radii[str(element1).lower()] + vdw_radii[str(element2).lower()])
+        clash_detection_limit = clash_detection_vdw_multiplier * (vdw_radii()[str(element1).lower()] + vdw_radii()[str(element2).lower()])
 
         if distance < clash_detection_limit:
             return True
@@ -235,7 +222,7 @@ def run_masterv2(poses, output_dir, chains, master_dir, database, jobstarter, rm
             mean_ensemble_rmsd = None
             min_ensemble_rmsd = None
 
-        df = pd.DataFrame({'description': [Path(match).stem for i in combinations], 'path': combinations, 'ensemble_num_matches': [ensemble_matches for i in combinations], 'path_num_matches': [match_dict[i]['path_num_matches'] for i in combinations], 'mean_match_rmsd': [mean_ensemble_rmsd for i in combinations], 'min_match_rmsd': [min_ensemble_rmsd for i in combinations]})
+        df = pd.DataFrame({'description': [int(Path(match).stem.split("_")[-1]) for i in combinations], 'path': combinations, 'ensemble_num_matches': [ensemble_matches for i in combinations], 'path_num_matches': [match_dict[i]['path_num_matches'] for i in combinations], 'mean_match_rmsd': [mean_ensemble_rmsd for i in combinations], 'min_match_rmsd': [min_ensemble_rmsd for i in combinations]})
         out_df.append(df)
 
     out_df = pd.concat(out_df).reset_index(drop=True)
@@ -323,7 +310,7 @@ def run_clash_detection(combinations, num_combs, directory, bb_multiplier, sc_mu
 
     in_df = pd.concat(in_df).reset_index(drop=True)
 
-    cmds = [f"python {script_path} --pkl {json} --working_dir {directory} --bb_multiplier {bb_multiplier} --sc_multiplier {sc_multiplier} --output_prefix {str(index)} --database_dir {database}" for index, json in enumerate(ensemble_names)]
+    cmds = [f"{os.path.join(PROTFLOW_ENV, "python")} {script_path} --pkl {json} --working_dir {directory} --bb_multiplier {bb_multiplier} --sc_multiplier {sc_multiplier} --output_prefix {str(index)} --database_dir {database}" for index, json in enumerate(ensemble_names)]
 
     log_and_print(f'Distributing clash detection to cluster...')
 
@@ -390,6 +377,12 @@ def create_covalent_bonds(df:pd.DataFrame):
         covalent_bonds = ""
     return covalent_bonds
 
+def create_motif_contig(chain_str, fragsize_str, path_order, sep):
+    chains = chain_str.split(sep)
+    fragsizes = fragsize_str.split(sep)
+    contig = [f"{chain}1-{length}" for chain, length in zip(chains, fragsizes)]
+    contig = f"{sep}".join(sorted(contigs, key=lambda x: path_order.index(x[0])))
+    return contig
 
 def compile_contig_string(series:pd.Series):
     nterm = 20
@@ -419,12 +412,38 @@ def compile_rfdiff_pose_opts(series:pd.Series):
         pose_opts = f"{compile_contig_string(series)} {compile_inpaint_string(series)} potentials.substrate={series['ligand_name']}"
     return pose_opts
 
-def create_path_pdb(series:pd.Series, output_dir, ligand, channel_path, preserve_channel_coordinates):
+
+def create_pdbs(df:pd.DataFrame, output_dir, ligand, channel_path, preserve_channel_coordinates):
+    filenames = []
+    for i, row in df.iterrows():
+        paths = row["poses"].split(",")
+        models = row["model_num"].split(",")
+        chains = row["chain_id"].split(",")
+        frag_chains = [load_structure_from_pdbfile(path, all_models=True)[int(model)][chain] for path, model, chain in zip(paths, models, chains)]
+        filename = ["".join([chain, model]) for chain, model in zip(chains, models)]
+        filename = "-".join(sorted(filename, key=lambda x: row['path_order'].index(x[0]))) + ".pdb"
+        filename = os.path.join(output_dir, filename)
+        struct = Structure.Structure('out')
+        model = Model.Model(0)
+        for frag in frag_chains:
+            model.add(frag)
+        model.add(ligand)
+        struct.add(model)
+        if channel_path and preserve_channel_coordinates:
+            model.add(load_structure_from_pdbfile(channel_path)["Q"])
+        elif channel_path:
+            model = add_polyala_to_pose(model, polyala_path=channel_path, polyala_chain="Q", ligand_chain='Z')
+        save_structure_to_pdbfile(struct, filename)
+        filenames.append(filename)
+    return filenames
+
+
+def create_path_pdb_original(series:pd.Series, output_dir, ligand, channel_path, preserve_channel_coordinates):
     #chains_models = series['path_name'].split('-')
     chains = sorted(series['path_order'])
     struct = Structure.Structure('out')
     model = Model.Model(0)
-    frag_chains = [load_structure_from_pdbfile(series['pose_paths'][chain], all_models=True)[series['model_num'][chain]][series['original_chain_id'][chain]] for chain in chains]
+    frag_chains = [load_structure_from_pdbfile(series['pose_paths'][chain], all_models=True)[series['model_num'][chain]][series['chain_id'][chain]] for chain in chains]
     for fragment, chain in zip(frag_chains, chains):
         fragment.id = chain
         model.add(fragment)
@@ -451,32 +470,25 @@ def combine_ligands(ligand_chain):
     return ligand_chain
 
 
-def create_path_series(path_df, path_order, ligands, ligand_name, pdb_dir, channel_path, preserve_channel_coordinates):
+def create_path_series(path_df:pd.DataFrame, path_order, ligands, ligand_name, pdb_dir, channel_path, preserve_channel_coordinates):
     path_dict = {'fixed_residues': {}, 'motif_residues': {}, 'catres_identities': {}, 'pose_paths': {}, 'original_chain_id': {}, 'model_num': {}}
     for index, row in path_df.iterrows():
         #TODO: this has to be done because subsequent scripts assume that first fragment is chain A, ... otherwise superpositioning does not work anymore
-        new_chain = chain_alphabet()[row['path'].index(row['chain_id'])]
-        row['original_chain_id'] = row['chain_id']
-        row['chain_id'] = new_chain
-        path_dict['original_chain_id'][row['chain_id']] = row['original_chain_id']
         path_dict['model_num'][row['chain_id']] = row['model_num']
         path_dict['pose_paths'][row['chain_id']] = row['poses']
         path_dict['fixed_residues'][row['chain_id']] = [row['rotamer_pos']]
         path_dict['motif_residues'][row['chain_id']] = [_ for _ in range(1, row['frag_length'] + 1)]
         path_dict['catres_identities'][f"{row['chain_id']}{row['rotamer_pos']}"] = row['AAs'][row['rotamer_pos'] - 1]
     mean_cols = ['path_score', 'ensemble_score', 'fragment_score', 'backbone_score', 'path_num_matches', 'match_score', 'rotamer_probability', 'rotamer_score']
-    series_dict = {}
-    for col in mean_cols:
-        series_dict[col] = path_df[col].mean()
-    for col in path_dict:
-        series_dict[col] = path_dict[col]
 
-    series = pd.Series(series_dict)
+    series = path_df[mean_cols].mean()
+    for col in path_dict:
+        series[col] = path_dict[col]
     series['path_order'] = path_order
+    ser = {chain: "ac" for chain in "sdf"}
     series['path_name'] = create_path_name(path_df, path_order)
     series['ligand_name'] = ligand_name
     series['ligand_chain'] = 'Z'
-    series['rfdiffusion_pose_opts'] = compile_rfdiff_pose_opts(series)
     series['pose'] = create_path_pdb(series, pdb_dir, ligands, channel_path, preserve_channel_coordinates)
     series['covalent_bonds'] = create_covalent_bonds(path_df)
     return series
@@ -595,6 +607,30 @@ def get_protein_atoms(pose: Structure, ligand_chain:str=None, atms:list=None) ->
 
     return pose_atoms
 
+def sort_dataframe_groups_by_column(df:pd.DataFrame, group_col:str, sort_col:str, ascending:bool=True, filter_top_n:int=None) -> pd.DataFrame:
+    # group by group column and calculate mean values
+    df_sorted = df.groupby(group_col, sort=False).agg({sort_col: "mean"}).sort_values(sort_col, ascending=ascending)
+    # sort by sort_col
+    df_sorted.sort_values(sort_col, ascending=ascending, inplace=True)
+    if filter_top_n:
+        df_sorted = df_sorted.head(filter_top_n)
+    # merge back with original dataframe
+    df = df_sorted.loc[:, []].merge(df, left_index=True, right_on=group_col)
+    # reset index
+    df.reset_index(drop=True, inplace=True)
+    return df
+
+def concat_columns(group):
+    return ','.join(group.astype(str))
+
+def split_str_to_dict(key_str, value_str, sep):
+    return dict(zip(key_str.split(sep), [list(i) for i in value_str.split(sep)]))
+
+def create_motif_residues(chain_str, fragsize_str, sep:str=","):
+    motif_residues = [[i for i in range(1, int(fragsize)+1)] for fragsize in fragsize_str.split(sep)]
+    return dict(zip(chain_str.split(sep), motif_residues))
+
+
 def main(args):
     '''
     Combines every model from each input pdb with every model from other input pdbs. Input pdbs must only contain chain A and (optional) a ligand in chain Z.
@@ -603,10 +639,11 @@ def main(args):
     '''
 
     # create output directory
-    os.makedirs(args.working_dir, exist_ok=True)
+    working_dir = os.path.join(args.working_dir, "motif_library_assembly")
+    os.makedirs(working_dir, exist_ok=True)
 
     # set up logging
-    logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(levelname)s - %(message)s', filename=os.path.join(args.working_dir, f"{args.output_prefix}_assembly.log"))
+    logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(levelname)s - %(message)s', filename=os.path.join(working_dir, f"{args.output_prefix}_assembly.log"))
     cmd = ''
     for key, value in vars(args).items():
         cmd += f'--{key} {value} '
@@ -622,7 +659,7 @@ def main(args):
     channels_dir = os.path.join(database_dir, "channel_placeholder")
 
     # check if output already exists
-    out_json = os.path.join(args.working_dir, f'{args.output_prefix}_assembly.json')
+    out_json = os.path.join(working_dir, f'{args.output_prefix}_assembly.json')
     if os.path.exists(out_json):
         logging.error(f'Output file already exists at {out_json}!')
         raise RuntimeError(f'Output file already exists at {out_json}!')
@@ -636,15 +673,14 @@ def main(args):
         channel_path = None
         logging.info("Running without channel placeholder.")
     elif args.channel_path:
-        if os.path.isfile(args.add_channel):
-            channel = load_structure_from_pdbfile(args.add_channel)[args.channel_chain]
+        if os.path.isfile(args.channel_path):
+            channel = load_structure_from_pdbfile(args.channel_path)[args.channel_chain]
             channel.detach_parent()
-            channel.id = ["Q"]
+            channel.id = "Q"
             for index, residue in enumerate(channel.get_residues()):
                 residue.id = (residue.id[0], index + 1, residue.id[2])
-            channel_path = os.path.join(args.working_dir, "channel_placeholder.pdb")
+            channel_path = os.path.join(working_dir, "channel_placeholder.pdb")
             save_structure_to_pdbfile(channel, channel_path)
-            channel_path = args.add_channel
         else:
             logging.error(f"Could not find a PDB file at {channel_path} to add as channel placeholder!")
             raise RuntimeError(f"Could not find a PDB file at {channel_path} to add as channel placeholder!")
@@ -662,7 +698,7 @@ def main(args):
 
     ################## CLASH DETECTION ##########################
 
-    clash_dir = os.path.join(args.working_dir, f'{args.output_prefix}_clash_check')
+    clash_dir = os.path.join(working_dir, f'{args.output_prefix}_clash_check')
     os.makedirs(clash_dir, exist_ok=True)
 
     grouped_df = in_df.groupby('poses', sort=False)
@@ -721,7 +757,7 @@ def main(args):
 
     init = time.time()
 
-    combinations = itertools.product(*[[row for index, row in pose_df.iterrows()] for pose, pose_df in grouped_df])
+    combinations = itertools.product(*[[row for index, row in pose_df.iterrows()] for _, pose_df in grouped_df])
 
     log_and_print(f'Performing pairwise clash detection...')
     ensemble_dfs = run_clash_detection(combinations=combinations, num_combs=num_combs, directory=clash_dir, bb_multiplier=args.fragment_backbone_clash_detection_vdw_multiplier, sc_multiplier=args.fragment_fragment_clash_detection_vdw_multiplier, database=database_dir, script_path=os.path.join(utils_dir, "clash_detection.py"), jobstarter=jobstarter)
@@ -737,42 +773,30 @@ def main(args):
 
 
     log_and_print(f'Completed clash check in {round(time.time() - init, 0)} s.')
-    if len(post_clash) == 0:
+    if len(post_clash.index) == 0:
         log_and_print(f'No ensembles found! Try adjusting VdW multipliers or pick different fragments!')
         raise RuntimeError(f'No ensembles found! Try adjusting VdW multipliers or pick different fragments!')
 
     passed = int(len(post_clash.index) / len(chains))
     log_and_print(f'Found {passed} non-clashing ensembles.')
 
-    dfs = [post_clash, ensemble_dfs]
+    # sort ensembles by score
+    log_and_print("Sorting ensembles by score...")
+    post_clash = sort_dataframe_groups_by_column(df=post_clash, group_col="ensemble_num", sort_col="ensemble_score", ascending=False)
+    post_clash["ensemble_num"] = post_clash.groupby("ensemble_num", sort=False).ngroup() + 1 
+    log_and_print("Sorting completed.")
+
+    # plot data
+    plotpath = os.path.join(working_dir, f"{args.output_prefix}_clash_filter.png")
+    log_and_print(f"Plotting data at {plotpath}.")
+    dfs = [post_clash.groupby('ensemble_num', sort=False).mean(numeric_only=True), score_df]
     df_names = ['filtered', 'unfiltered']
     cols = ['ensemble_score', 'fragment_score', 'backbone_score', 'rotamer_score']
-    col_names = ['ensemble score', 'fragment score', 'backbone score', 'rotamer score']
+    col_names = ['ensemble score', 'mean fragment score', 'mean backbone score', 'mean rotamer score']
     y_labels = ['score [AU]', 'score [AU]', 'score [AU]', 'score [AU]']
     dims = [(-0.05, 1.05), (-0.05, 1.05), (-0.05, 1.05), (-0.05, 1.05)]
-    plotpath = os.path.join(args.working_dir, f"{args.output_prefix}_clash_filter.png")
-    violinplot_multiple_cols_dfs(dfs=dfs, df_names=df_names, cols=cols, titles=col_names, y_labels=y_labels, dims=dims, out_path=plotpath, show_fig=False)
+    #violinplot_multiple_cols_dfs(dfs=dfs, df_names=df_names, cols=cols, titles=col_names, y_labels=y_labels, dims=dims, out_path=plotpath, show_fig=False)
 
-    #### sort ensembles by fragment score ####
-    score_df_list = []
-    for ensemble, df in post_clash.groupby('ensemble_num', sort=False):
-        score_df_list.append((df['fragment_score'].mean(), df))
-
-    score_df_list.sort(key=lambda x: x[0], reverse=True)
-
-
-    score_sorted_list = []
-    ensemble_num = 0
-    for score_df in score_df_list:
-        df = score_df[1]
-        df['ensemble_num'] = ensemble_num
-        df['ensemble_name'] = 'ensemble_' + str(ensemble_num)
-        score_sorted_list.append(df)
-        ensemble_num += 1
-    
-    post_clash = pd.concat(score_sorted_list)
-
-    log_and_print("Sorting completed")
     
     if args.run_master:
 
@@ -785,14 +809,14 @@ def main(args):
         col_names = ['ensemble score', 'fragment score', 'backbone score', 'rotamer score']
         y_labels = ['score [AU]', 'score [AU]', 'score [AU]', 'score [AU]']
         dims = [(-0.05, 1.05), (-0.05, 1.05), (-0.05, 1.05), (-0.05, 1.05)]
-        plotpath = os.path.join(args.working_dir, f"{args.output_prefix}_master_input_filter.png")
+        plotpath = os.path.join(working_dir, f"{args.output_prefix}_master_input_filter.png")
         violinplot_multiple_cols_dfs(dfs, df_names=df_names, cols=cols, titles=col_names, y_labels=y_labels, dims=dims, out_path=plotpath)
 
 
         #### check for matches in database for top ensembles ####
 
         log_and_print(f'Writing input ensembles to disk...')
-        master_dir = os.path.join(args.working_dir, f'{args.output_prefix}_master')
+        master_dir = os.path.join(working_dir, f'{args.output_prefix}_master')
         os.makedirs(master_dir, exist_ok=True)
         os.makedirs(f"{master_dir}/pdbs/", exist_ok=True)
         filenames = []
@@ -821,9 +845,9 @@ def main(args):
         df = normalize_col(df, 'path_num_matches', True)
         df = normalize_col(df, 'ensemble_num_matches', True)
         df = combine_normalized_scores(df, 'match_score', ['path_num_matches_normalized', 'ensemble_num_matches_normalized'], [args.path_match_weight, args.ensemble_match_weight], False, False)
-        post_match = master_input.merge(df, left_on='ensemble_name', right_on='description').drop('description', axis=1)
+        post_match = master_input.merge(df, left_on='ensemble_num', right_on='description').drop('description', axis=1)
         post_match = combine_normalized_scores(post_match, 'path_score', ['ensemble_score', 'match_score'], [args.fragment_score_weight, args.match_score_weight], False, False)
-        violinplot_multiple_cols(post_match, cols=['match_score', 'path_num_matches', 'ensemble_num_matches'], titles=['match score', f'path matches\n< {rmsd_cutoff}', f'ensemble matches\n< {rmsd_cutoff}'], y_labels=['AU', '#', '#'], dims=[(-0.05, 1.05), (post_match['path_num_matches'].max() * -0.05, post_match['path_num_matches'].max() * 1.05 ), (post_match['ensemble_num_matches'].max() * -0.05, post_match['ensemble_num_matches'].max() * 1.05 )], out_path=os.path.join(args.working_dir, f"{args.output_prefix}_master_matches_<_{rmsd_cutoff}.png"), show_fig=False)
+        violinplot_multiple_cols(post_match, cols=['match_score', 'path_num_matches', 'ensemble_num_matches'], titles=['match score', f'path matches\n< {rmsd_cutoff}', f'ensemble matches\n< {rmsd_cutoff}'], y_labels=['AU', '#', '#'], dims=[(-0.05, 1.05), (post_match['path_num_matches'].max() * -0.05, post_match['path_num_matches'].max() * 1.05 ), (post_match['ensemble_num_matches'].max() * -0.05, post_match['ensemble_num_matches'].max() * 1.05 )], out_path=os.path.join(working_dir, f"{args.output_prefix}_master_matches_<_{rmsd_cutoff}.png"), show_fig=False)
 
 
         path_dfs = post_match.copy()
@@ -838,8 +862,8 @@ def main(args):
             col_names = ['path score', 'master score', 'ensemble score', 'fragment score', 'backbone score', 'rotamer score']
             y_labels = ['score [AU]', 'score [AU]', 'score [AU]', 'score [AU]', 'score [AU]', 'score [AU]']
             dims = [(-0.05, 1.05), (-0.05, 1.05), (-0.05, 1.05), (-0.05, 1.05), (-0.05, 1.05), (-0.05, 1.05)]
-            plotpath = os.path.join(args.working_dir, f"{args.output_prefix}_num_matches_<_{args.match_cutoff}_filter.png")
-            violinplot_multiple_cols(path_dfs, cols=['match_score', 'path_num_matches', 'ensemble_num_matches', 'mean_match_rmsd', 'min_match_rmsd'], titles=['match score', f'path\nmatches < {rmsd_cutoff}', f'ensemble\nmatches < {rmsd_cutoff}', 'ensemble\nmean match rmsd', 'ensemble\nminimum match rmsd'], y_labels=['AU', '#', '#', 'A', 'A'], dims=[(-0.05, 1.05), (path_dfs['path_num_matches'].min() - (path_dfs['path_num_matches'].max() - path_dfs['path_num_matches'].min()) * 0.05, (path_dfs['path_num_matches'].max() + (path_dfs['path_num_matches'].max() - path_dfs['path_num_matches'].min()) * 0.05)), (args.match_cutoff - (path_dfs['path_num_matches'].max() - args.match_cutoff) * 0.05, (path_dfs['ensemble_num_matches'].max() + (path_dfs['ensemble_num_matches'].max() - args.match_cutoff) * 0.05)), (rmsd_cutoff * -0.05, rmsd_cutoff * 1.05), (rmsd_cutoff * -0.05, rmsd_cutoff * 1.05)], out_path=os.path.join(args.working_dir, f"{args.output_prefix}_master_matches_<_{rmsd_cutoff}_matchfilter.png"), show_fig=False)
+            plotpath = os.path.join(working_dir, f"{args.output_prefix}_num_matches_<_{args.match_cutoff}_filter.png")
+            violinplot_multiple_cols(path_dfs, cols=['match_score', 'path_num_matches', 'ensemble_num_matches', 'mean_match_rmsd', 'min_match_rmsd'], titles=['match score', f'path\nmatches < {rmsd_cutoff}', f'ensemble\nmatches < {rmsd_cutoff}', 'ensemble\nmean match rmsd', 'ensemble\nminimum match rmsd'], y_labels=['AU', '#', '#', 'A', 'A'], dims=[(-0.05, 1.05), (path_dfs['path_num_matches'].min() - (path_dfs['path_num_matches'].max() - path_dfs['path_num_matches'].min()) * 0.05, (path_dfs['path_num_matches'].max() + (path_dfs['path_num_matches'].max() - path_dfs['path_num_matches'].min()) * 0.05)), (args.match_cutoff - (path_dfs['path_num_matches'].max() - args.match_cutoff) * 0.05, (path_dfs['ensemble_num_matches'].max() + (path_dfs['ensemble_num_matches'].max() - args.match_cutoff) * 0.05)), (rmsd_cutoff * -0.05, rmsd_cutoff * 1.05), (rmsd_cutoff * -0.05, rmsd_cutoff * 1.05)], out_path=os.path.join(working_dir, f"{args.output_prefix}_master_matches_<_{rmsd_cutoff}_matchfilter.png"), show_fig=False)
             violinplot_multiple_cols_dfs(dfs, df_names=df_names, cols=cols, titles=col_names, y_labels=y_labels, dims=dims, out_path=plotpath, show_fig=False)
 
     else:
@@ -847,44 +871,71 @@ def main(args):
         post_clash['match_score'] = 0
         post_clash['path_score'] = post_clash['ensemble_score']
         post_clash['path_num_matches'] = 0
-        
-        dfs = []
-        for perm in itertools.permutations(chains):
-            post_clash["path"] = "".join(perm)
-            dfs.append(post_clash.copy())
-        path_dfs = pd.concat(dfs)
-        path_dfs.reset_index(drop=True, inplace=True)
+
+        paths = ["".join(perm) for perm in itertools.permutations(chains)]
+        dfs = [post_clash.assign(path_name=post_clash['ensemble_num'].astype(str)+"_" + p) for p in paths]
+        path_dfs = pd.concat(dfs, ignore_index=True)
         log_and_print("Done creating paths.")
 
-    ens_num = 0
-    pdb_dir = os.path.join(args.working_dir, "pdb_in")
+    pdb_dir = os.path.join(working_dir, "motif_library")
     os.makedirs(pdb_dir, exist_ok=True)
 
-    ensemble_grouped_path_df = path_dfs.copy()
     if args.max_paths_per_ensemble:
-        ensemble_filtered_paths = []
-        for ensemble, df in ensemble_grouped_path_df.groupby('ensemble_num', sort=False):
-            ensemble_filtered_paths.append(df.sort_values(['path_score', 'path'], ascending=False).head(args.max_paths_per_ensemble * len(chains)))
-        ensemble_grouped_path_df = pd.concat(ensemble_filtered_paths)
-        log_and_print(f'Removed {int((len(path_dfs.index) - len(ensemble_grouped_path_df.index)) / len(chains))} paths because of {args.max_paths_per_ensemble} paths per ensemble cutoff.\nTotal passed paths: {int(len(ensemble_grouped_path_df.index) / len(chains))}.')
+        df_list = []
+        for _, df in path_dfs.groupby('ensemble_num', sort=False):
+            df = sort_dataframe_groups_by_column(df, group_col="path_name", sort_col="path_score", ascending=False, filter_top_n=args.max_paths_per_ensemble)
+            df_list.append(df)
+        path_dfs = pd.concat(df_list)
 
-    log_and_print(f'Selecting top {args.max_out} paths...')
-    top_path_dfs = ensemble_grouped_path_df.sort_values(['path_score', 'ensemble_num', 'path'], ascending=False).head(args.max_out * len(chains))
+    # select top n paths
+    log_and_print(f"Selecting top {args.max_out} paths...")
+    top_path_dfs = sort_dataframe_groups_by_column(df=path_dfs, group_col="path_name", sort_col="path_score", ascending=False, filter_top_n=args.max_out)
+    log_and_print(f"Found {len(top_path_dfs.index)/len(chains)} paths.")
 
-    selected_paths = []
-    for ensemble_num, ensemble_df in top_path_dfs.groupby('ensemble_num', sort=False):
-        ensemble_df['ensemble_num'] = ens_num
-        ens_num += 1
-        for path_order, path_df in ensemble_df.groupby('path', sort=False):
-            path_series = create_path_series(path_df, path_order, ligands, lig_names, pdb_dir, channel_path, args.preserve_channel_coordinates)
-            selected_paths.append(path_series)
+    # create path dataframe
+    log_and_print(f"Creating path dataframe...")
+    aggregate = {'poses': concat_columns,
+                 'chain_id': concat_columns,
+                 'model_num': concat_columns,
+                 'rotamer_pos':concat_columns, 
+                 'frag_length': concat_columns, 
+                 'path_score': 'mean', 
+                 'match_score': 'mean',
+                 'ensemble_score': 'mean', 
+                 'path_num_matches': 'mean',
+                 'fragment_score': concat_columns, 
+                 'backbone_score': [("backbone_score", concat_columns), ("backbone_score_mean", "mean")],
+                 'rotamer_score': [("rotamer_score", concat_columns), ("rotamer_score_mean", "mean")],
+                 'rotamer_probability': [("rotamer_probability", concat_columns), ("rotamer_probability_mean", "mean")]}
+    selected_paths = top_path_dfs.groupby('path_name', sort=False).agg(aggregate).reset_index(names=["path_name"])
+    selected_paths.columns = ['path_name', 'poses', 'chain_id', 'model_num', 'rotamer_pos', 'frag_length',
+                               'path_score', 'match_score', 'ensemble_score', 'path_num_matches', 'fragment_score',
+                               'rotamer_score', 'backbone_score', 'backbone_score_mean', 'rotamer_score_mean', 
+                               'rotamer_probability', 'rotamer_probability_mean']
+    
+    selected_paths["fixed_residues"] = selected_paths.apply(lambda row: split_str_to_dict(row['chain_id'], row['rotamer_pos'], sep=","), axis=1)
+    selected_paths["motif_residues"] = selected_paths.apply(lambda row: create_motif_residues(row['chain_id'], row['frag_length'], sep=","), axis=1)
+    selected_paths["motif_contigs"] = selected_paths.apply(lambda row: create_motif_contig(row['chain_id'], row['frag_length'], sep=","), axis=1)
+    selected_paths["path_order"] = selected_paths['path_name'].str.split('_').str[-1]
 
-    selected_paths = pd.DataFrame(selected_paths).sort_values('path_score', ascending=False).reset_index(drop=True).drop(['path_order', 'pose_paths'], axis=1)
+    # combine multiple ligands into one for rfdiffusion
+    if len([lig for lig in ligands.get_residues()]) > 1:
+        ligand = copy.deepcopy(ligands)
+        for lig in ligands.get_residues():
+            lig.resname = "LIG"
+    else:
+        ligand = ligands
 
-    selected_paths.set_index('path_name', inplace=True)
-    selected_paths.to_json(os.path.join(args.working_dir, "selected_paths.json"))
+    lib_path = os.path.join(working_dir, "motif_library")
+    log_and_print(f"Writing motif library .pdbs to {lib_path}")
+    os.makedirs(lib_path, exist_ok=True)
+    selected_paths["poses"] = create_pdbs(selected_paths, lib_path, ligand, channel_path, args.preserve_channel_coordinates)
 
-    ligand_dir = os.path.join(args.working_dir, 'ligand')
+    paths_path = os.path.join(working_dir, "selected_paths.json")
+    log_and_print(f"Writing data to {paths_path}")
+    selected_paths.to_json(paths_path)
+
+    ligand_dir = os.path.join(working_dir, 'ligand')
     os.makedirs(ligand_dir, exist_ok=True)
     for index, ligand in enumerate(ligands.get_residues()):
         ligand_pdbfile = save_structure_to_pdbfile(ligand, lig_path:=os.path.join(ligand_dir, f"LG{index+1}.pdb"))
@@ -892,25 +943,26 @@ def main(args):
         if len(list(ligand.get_atoms())) > 2:
             # store ligand as .mol file for rosetta .molfile-to-params.py
             log_and_print(f"Running 'molfile_to_params.py' to generate params file for Rosetta.")
-            lig_molfile = obabel_fileconverter(input_file=lig_path, output_file=lig_path.replace(".pdb", ".mol2"), input_format="pdb", output_format=".mol2")
-            cmd = f"python {os.path.join(utils_dir, 'molfile_to_params.py')} -n {lig_name} -p {ligand_dir}/LG{index+1} {lig_molfile} --keep-names --clobber --chain=Z"
-            LocalJobStarter().start(cmds=[cmd], jobname="moltoparams", )
+            lig_molfile = openbabel_fileconverter(input_file=lig_path, output_file=lig_path.replace(".pdb", ".mol2"), input_format="pdb", output_format=".mol2")
+            cmd = f"{os.path.join(PROTFLOW_ENV, "python")} {os.path.join(utils_dir, 'molfile_to_params.py')} -n {lig_name} -p {ligand_dir}/LG{index+1} {lig_molfile} --keep-names --clobber --chain=Z"
+            LocalJobStarter().start(cmds=[cmd], jobname="moltoparams", output_path=ligand_dir)
             lig_path = f"{ligand_dir}/LG{index+1}_0001.pdb"
         else:
             log_and_print(f"Ligand at {ligand_pdbfile} contains less than 3 atoms. No Rosetta Params file can be written for it.")
 
-    violinplot_multiple_cols(selected_paths, cols=['path_score', 'match_score', 'path_num_matches', 'ensemble_score', 'fragment_score', 'backbone_score', 'rotamer_score', 'rotamer_probability'], titles=['path score', 'master score', f'matches < {rmsd_cutoff} A', 'ensemble score', 'mean fragment score', 'mean backbone score', 'mean rotamer score', 'mean rotamer\nprobability'], y_labels=['AU', 'AU', '#', 'AU', 'AU', 'AU', 'AU', 'probability'], dims=[(-0.05, 1.05), (-0.05, 1.05), (0 - selected_paths['path_num_matches'].max() * 0.05, selected_paths['path_num_matches'].max() * 1.05), (-0.05, 1.05), (-0.05, 1.05), (-0.05, 1.05), (-0.05, 1.05), (-0.05, 1.05)], out_path=os.path.join(args.working_dir, f"{args.output_prefix}_selected_paths_info.png", show_fig=False))
+    #violinplot_multiple_cols(selected_paths, cols=['path_score', 'match_score', 'path_num_matches', 'ensemble_score', 'fragment_score', 'backbone_score', 'rotamer_score', 'rotamer_probability'], titles=['path score', 'master score', f'matches', 'ensemble score', 'mean fragment score', 'mean backbone score', 'mean rotamer score', 'mean rotamer\nprobability'], y_labels=['AU', 'AU', '#', 'AU', 'AU', 'AU', 'AU', 'probability'], dims=[(-0.05, 1.05), (-0.05, 1.05), (0 - selected_paths['path_num_matches'].max() * 0.05, selected_paths['path_num_matches'].max() * 1.05), (-0.05, 1.05), (-0.05, 1.05), (-0.05, 1.05), (-0.05, 1.05), (-0.05, 1.05)], out_path=os.path.join(working_dir, f"{args.output_prefix}_selected_paths_info.png"), show_fig=False)
 
-
+    """
+    
     dfs = [top_path_dfs, path_dfs]
     df_names = ['selected paths', '> match cutoff']
     cols = ['path_score', 'match_score', 'ensemble_score', 'fragment_score', 'backbone_score', 'rotamer_score']
     col_names = ['path score', 'master score', 'ensemble score', 'fragment score', 'backbone score', 'rotamer score']
-    y_labels = ['score [AU]', 'score [AU]', 'score [AU]', 'score [AU]', 'score [AU]', 'score [AU]']
-    dims = [(-0.05, 1.05), (-0.05, 1.05), (-0.05, 1.05), (-0.05, 1.05), (-0.05, 1.05), (-0.05, 1.05)]
-    plotpath = os.path.join(args.working_dir, f"{args.output_prefix}_top_paths_filter.png")
-    violinplot_multiple_cols(dfs, df_names=df_names, cols=cols, titles=col_names, y_labels=y_labels, dims=dims, out_path=plotpath, show_fig=False)
-
+    y_labels = ['score [AU]' for _ in cols]
+    dims = [(-0.05, 1.05) for _ in cols]
+    plotpath = os.path.join(working_dir, f"{args.output_prefix}_top_paths_filter.png")
+    violinplot_multiple_cols_dfs(dfs, df_names=df_names, cols=cols, titles=col_names, y_labels=y_labels, dims=dims, out_path=plotpath, show_fig=False)
+    """
 
     log_and_print(f'Done!')
 

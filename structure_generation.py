@@ -531,8 +531,17 @@ def main(args):
 
     log_cmd(args)
 
-    if args.ref_input_json and args.eval_input_json:
-        raise ValueError(":ref_input_json: and :eval_input_json: are mutually exclusive!")
+    if not sum(bool(v) for v in [args.screen_input_json, args.ref_input_json, args.eval_input_json, args.variants_input_json]) == 1:
+        raise ValueError("One (but not more) of :screen_input_json:, :ref_input_json:, :eval_input_json: and :variants_input_json: must be set!")
+
+    if args.screen_input_json:
+        backbones = protflow.poses.load_poses(args.screen_input_json)
+    elif args.ref_input_json:
+        backbones = protflow.poses.load_poses(args.ref_input_json)
+    if args.eval_input_json:
+        backbones = protflow.poses.load_poses(args.eval_input_json)
+    elif args.variants_input_json:
+        backbones = protflow.poses.load_poses(args.ref_input_json)
 
     # setup jobstarters
     cpu_jobstarter = SbatchArrayJobstarter(max_cores=args.max_cpus)
@@ -568,12 +577,14 @@ def main(args):
     colabfold = protflow.tools.colabfold.Colabfold(jobstarter=real_gpu_jobstarter)
     if args.attnpacker_repack:
         attnpacker = protflow.tools.attnpacker.AttnPacker(jobstarter=gpu_jobstarter)
-    
-    params_files = get_params_file(dir=args.input_dir, params=args.params_file)
+
+    residue_cols = ["fixed_residues", "motif_residues", "template_motif", "template_fixedres", "ligand_motif"]
+
+
+
     ligand_res_dict = {args.ligand_chain: [i for i in range(1, len(params_files)+1)]}
     ligandmpnn_options = f"--ligand_mpnn_use_side_chain_context 1 {args.ligandmpnn_options}"
 
-    residue_cols = ["fixed_residues", "motif_residues", "template_motif", "template_fixedres", "ligand_motif"]
 
     # set up rosetta options
     bb_opt_options = f"-parser:protocol {args.bbopt_script} -beta"
@@ -621,14 +632,11 @@ def main(args):
         backbones.df["ligand_motif"] = [protflow.residues.from_dict(ligand_res_dict) for _ in range(len(backbones.df.index))]
 
         # set motif_cols to keep after rfdiffusion:
-        motif_cols = ["fixed_residues"]
-        if args.model == "default":
-            motif_cols.append("motif_residues")
+        motif_cols = ["fixed_residues", "motif_residues"]
 
         # store original motifs for calculation of motif RMSDs later
         backbones.df["template_motif"] = backbones.df["motif_residues"]
         backbones.df["template_fixedres"] = backbones.df["fixed_residues"]
-
 
         # save run name in df, makes it easier to identify where poses come from when merging results with other runs
         backbones.df["run_name"] = os.path.basename(args.output_dir)
@@ -650,42 +658,25 @@ def main(args):
         else:
             recenter = ""
 
-        # change pose_opts according to model being used:
-        if args.model == "active_site":
-            logging.info("Using Active Site Model. Changing contig strings from pose_options.")
-            #backbones.df["rfdiffusion_pose_opts"] = [active_site_pose_opts(row["rfdiffusion_pose_opts"], row["template_fixedres"], as_model_path=args.as_model_path) for row in backbones]
-
         input_backbones = copy.deepcopy(backbones)
         decentralize_weights = args.screen_decentralize_weights.split(';')
         decentralize_distances = args.screen_decentralize_distances.split(';')
-        substrate_contacts_weights = args.screen_substrate_contacts_weight.split(';')
-        rog_weights = args.screen_rog_weight.split(';')
         num_rfdiffusions = args.screen_num_rfdiffusions
-        if args.model == "default":
-            settings = tuple(itertools.product(decentralize_weights, decentralize_distances))
-        elif args.model == "active_site":
-            settings = tuple(itertools.product(substrate_contacts_weights, rog_weights))
+        settings = tuple(itertools.product(decentralize_weights, decentralize_distances))
         prefixes = [f"screen_{i+1}" for i, s in enumerate(settings)]
 
         for prefix, setting in zip(prefixes, settings):
-            logging.info(f"Running {prefix} with settings: {f'decentralize_weight: {setting[0]}, decentralize_distance: {setting[1]}' if args.model=='default' else f'substrate_contacts_weights: {setting[0]}, rog_weights: {setting[1]}'}")
+            logging.info(f"Running {prefix} with settings: 'decentralize_weight: {setting[0]}, decentralize_distance: {setting[1]}")
             backbones = copy.deepcopy(input_backbones)
-            if args.model == "default":
-                backbones.df['screen_decentralize_weight'] = float(setting[0])
-                backbones.df['screen_decentralize_distance'] = float(setting[1])
-            elif args.model == "active_site":
-                backbones.df['screen_substrate_contacts_weight'] = float(setting[0])
-                backbones.df['screen_rog_weight'] = float(setting[1])
+            backbones.df['screen_decentralize_weight'] = float(setting[0])
+            backbones.df['screen_decentralize_distance'] = float(setting[1])
 
             backbones.df['screen'] = int(prefix.split('_')[1])
 
             backbones.set_work_dir(os.path.join(screening_dir, prefix))
 
             # run diffusion
-            if args.model == "active_site":
-                diffusion_options = f"diffuser.T={str(args.rfdiffusion_timesteps)} potentials.guide_scale=5 inference.num_designs={num_rfdiffusions} potentials.guiding_potentials=[\\'type:substrate_contacts,weight:{setting[0]}\\',\\'type:custom_ROG,weight:{setting[1]}\\'] potentials.guide_decay=quadratic contigmap.length={args.total_length}-{args.total_length} potentials.substrate=LIG"
-            else:
-                diffusion_options = f"diffuser.T={str(args.rfdiffusion_timesteps)} potentials.guide_scale=5 inference.num_designs={num_rfdiffusions} potentials.guiding_potentials=[\\'type:substrate_contacts,weight:0\\',\\'type:custom_recenter_ROG,weight:{setting[0]},rog_weight:0,distance:{setting[1]}{recenter}\\'] potentials.guide_decay=quadratic contigmap.length={args.total_length}-{args.total_length} potentials.substrate=LIG"
+            diffusion_options = f"diffuser.T={str(args.rfdiffusion_timesteps)} potentials.guide_scale=5 inference.num_designs={num_rfdiffusions} potentials.guiding_potentials=[\\'type:substrate_contacts,weight:0\\',\\'type:custom_recenter_ROG,weight:{setting[0]},rog_weight:0,distance:{setting[1]}{recenter}\\'] potentials.guide_decay=quadratic contigmap.length={args.total_length}-{args.total_length} potentials.substrate=LIG"
             backbones = rfdiffusion.run(
                 poses=backbones,
                 prefix="rfdiffusion",
@@ -981,8 +972,8 @@ def main(args):
 
         if args.ref_input_poses_per_bb:
             logging.info(f"Filtering refinement input poses on per backbone level according to design_composite_score...")
-            backbones.filter_poses_by_rank(n=args.ref_input_poses_per_bb, score_col=f'design_composite_score', remove_layers=1, prefix='refinement_input', plot=True)
-        elif args.ref_input_poses:
+            backbones.filter_poses_by_rank(n=args.ref_input_poses_per_bb, score_col=f'design_composite_score', remove_layers=1, prefix='refinement_input_bb', plot=True)
+        if args.ref_input_poses:
             logging.info(f"Filtering refinement input according to design_composite_score...")
             backbones.filter_poses_by_rank(n=args.ref_input_poses, score_col=f'design_composite_score', prefix='refinement_input', plot=True)
 
@@ -1011,7 +1002,7 @@ def main(args):
         cols = ["esm_plddt", "esm_backbone_rmsd", "esm_catres_bb_rmsd", "esm_catres_heavy_rmsd", "fastrelax_total_score", "esm_tm_sc_tm", "esm_rog", "esm_lig_contacts", "esm_ligand_clashes", "screen", "screen_decentralize_weight", "screen_decentralize_distance"]
         titles = ["ESMFold pLDDT", "ESMFold BB-Ca RMSD", "ESMFold fixed res\nBB-Ca RMSD", "ESMFold Sidechain\nRMSD", "Rosetta total_score", "SC-TM Score", "Radius of Gyration", "Ligand Contacts", "Ligand Clashes", "screen number", "decentralize weight", "decentralize distance"]
         y_labels = ["pLDDT", "Angstrom", "Angstrom", "Angstrom", "[REU]", "TM Score", "Angstrom", "#", "#", "#", "AU", "Angstrom"]
-        dims = [None for col in cols]
+        dims = [None for _ in cols]
 
         plots.violinplot_multiple_cols(
             dataframe = backbones.df,
@@ -1733,7 +1724,6 @@ def main(args):
 if __name__ == "__main__":
     import argparse
     argparser = argparse.ArgumentParser(formatter_class=argparse.ArgumentDefaultsHelpFormatter)
-    argparser.add_argument("--input_dir", type=str, required=True, help="input_directory that contains all ensemble *.pdb files to be hallucinated (max 1000 files).")
     argparser.add_argument("--output_dir", type=str, required=True, help="output_directory")
 
     # general optionals
@@ -1748,6 +1738,21 @@ if __name__ == "__main__":
     argparser.add_argument("--cpu_only", action="store_true", help="Should only cpu's be used during the entire pipeline run?")
     argparser.add_argument("--max_gpus", type=int, default=10, help="How many GPUs do you want to use at once?")
     argparser.add_argument("--max_cpus", type=int, default=1000, help="How many cpus do you want to use at once?")
+
+
+    # screening
+    argparser.add_argument("--screen_input_json", type=str, required=True, help="input_directory that contains all ensemble *.pdb files to be hallucinated (max 1000 files).")
+    argparser.add_argument("--screen_decentralize_weights", type=str, default="10;20;30;40", help="Decentralize weights that should be tested during screening. Separated by ;. Only used if <model> is 'default'.")
+    argparser.add_argument("--screen_decentralize_distances", type=str, default="0;2;4;6", help="Decentralize distances that should be tested during screening. Separated by ;. Only used if <model> is 'default'.")
+    argparser.add_argument("--screen_input_poses", type=int, default=20, help="Number of input poses for screening. Will be picked randomly if --screen_from_top is not set.")
+    argparser.add_argument("--screen_input_selection", default="weighted", help="Can be either 'top', 'random' or 'weighted' (default). Defines if motif library input poses are chosen based on score, at random or random weighted by score.")
+    argparser.add_argument("--screen_num_rfdiffusions", type=int, default=1, help="Number of backbones to generate per input path during screening.")
+    argparser.add_argument("--screen_mpnn_rlx_mpnn", action="store_true", help="Instead of running LigandMPNN on RFdiffusion output and then directly predict sequences, run a MPNN-RLX-MPNN-ESM trajectory (like in refinement).")
+    argparser.add_argument("--screen_substrate_contacts_weight", type=str, default="0", help="Substrate contacts potential weights that should be tested during screening. Separated by ;. Only used if <model> is 'active_site'.")
+    argparser.add_argument("--screen_rog_weight", type=str, default="2,3,4", help="Weights for ROG potential that should be tested during screening. Separated by ;. Only used if <model> is 'active_site'.")
+    argparser.add_argument("--screen_num_mpnn_sequences", type=int, default=20, help="Number of LigandMPNN sequences that should be predicted with ESMFold post-RFdiffusion.")
+    argparser.add_argument("--screen_num_seq_thread_sequences", type=int, default=3, help="Number of LigandMPNN sequences that should be generated during the sequence threading phase (input for backbone optimization). Only used if <screen_mpnn_rlx_mpnn> is True.")
+    argparser.add_argument("--screen_input_json", type=str, default=None, help="Read in a poses json file containing input poses for screening (e.g. the successful_input_motifs.json from a previous screening run).")
 
     # refinement optionals
     argparser.add_argument("--ref_prefix", type=str, default="", help="Prefix for refinement runs for testing different settings.")
@@ -1765,19 +1770,6 @@ if __name__ == "__main__":
     argparser.add_argument("--ref_seq_thread_num_mpnn_seqs", type=float, default=3, help="Number of LigandMPNN output sequences during the initial, sequence-threading phase (pre-relax).")
     argparser.add_argument("--ref_input_json", type=str, default=None, help="Read in a poses json file containing input poses for refinement. Screening will be skipped.")
     argparser.add_argument("--ref_start_cycle", type=int, default=1, help="Number from which to start cycles. Useful if adding additional refinement cycles after a run has completed.")
-
-    # screening
-    argparser.add_argument("--screen_decentralize_weights", type=str, default="10;20;30;40", help="Decentralize weights that should be tested during screening. Separated by ;. Only used if <model> is 'default'.")
-    argparser.add_argument("--screen_decentralize_distances", type=str, default="0;2;4;6", help="Decentralize distances that should be tested during screening. Separated by ;. Only used if <model> is 'default'.")
-    argparser.add_argument("--screen_input_poses", type=int, default=20, help="Number of input poses for screening. Will be picked randomly if --screen_from_top is not set.")
-    argparser.add_argument("--screen_input_selection", default="weighted", help="Can be either 'top', 'random' or 'weighted' (default). Defines if motif library input poses are chosen based on score, at random or random weighted by score.")
-    argparser.add_argument("--screen_num_rfdiffusions", type=int, default=1, help="Number of backbones to generate per input path during screening.")
-    argparser.add_argument("--screen_mpnn_rlx_mpnn", action="store_true", help="Instead of running LigandMPNN on RFdiffusion output and then directly predict sequences, run a MPNN-RLX-MPNN-ESM trajectory (like in refinement).")
-    argparser.add_argument("--screen_substrate_contacts_weight", type=str, default="0", help="Substrate contacts potential weights that should be tested during screening. Separated by ;. Only used if <model> is 'active_site'.")
-    argparser.add_argument("--screen_rog_weight", type=str, default="2,3,4", help="Weights for ROG potential that should be tested during screening. Separated by ;. Only used if <model> is 'active_site'.")
-    argparser.add_argument("--screen_num_mpnn_sequences", type=int, default=20, help="Number of LigandMPNN sequences that should be predicted with ESMFold post-RFdiffusion.")
-    argparser.add_argument("--screen_num_seq_thread_sequences", type=int, default=3, help="Number of LigandMPNN sequences that should be generated during the sequence threading phase (input for backbone optimization). Only used if <screen_mpnn_rlx_mpnn> is True.")
-    argparser.add_argument("--screen_input_json", type=str, default=None, help="Read in a poses json file containing input poses for screening (e.g. the successful_input_motifs.json from a previous screening run).")
 
     # evaluation
     argparser.add_argument("--eval_prefix", type=str, default=None, help="Prefix for evaluation runs for testing different settings or refinement outputs.")
@@ -1803,7 +1795,6 @@ if __name__ == "__main__":
     argparser.add_argument("--variants_evaluation_input_poses", type=int, default=200, help="Number of poses per unique backbone that should go into the evaluation step of variant generation.")
 
     # rfdiffusion optionals
-    argparser.add_argument("--as_model_path", type=str, default="/home/mabr3112/RFdiffusion/models/ActiveSite_ckpt.pt")
     argparser.add_argument("--recenter", type=str, default=None, help="Point (xyz) in input pdb towards the diffusion should be recentered. Set strength of recentering with --decentralize_distance. example: --recenter=-13.123;34.84;2.3209")
     argparser.add_argument("--flanking", type=str, default="split", help="How flanking should be set. Always leave on split. nterm or cterm also valid options.")
     argparser.add_argument("--flanker_length", type=int, default=30, help="Set Length of Flanking regions. For active_site model: 30 (recommended at least).")
