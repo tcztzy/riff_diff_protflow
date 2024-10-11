@@ -1698,7 +1698,7 @@ if __name__ == "__main__":
     argparser.add_argument("--screen_decentralize_weights", type=str, default="20,40", help="Decentralize weights that should be tested during screening. Separated by ','.")
     argparser.add_argument("--screen_decentralize_distances", type=str, default="2,4", help="Decentralize distances that should be tested during screening. Separated by ','.")
     argparser.add_argument("--screen_input_poses", type=int, default=200, help="Number of input poses for screening. Poses will be selected according to <screen_input_selection>.")
-    argparser.add_argument("--screen_input_selection", default="top", help="Can be either 'top' (default), 'random' or 'weighted'. Defines if motif library input poses are chosen based on score, at random or random weighted by score.")
+    argparser.add_argument("--screen_input_selection", default="weighted", help="Can be either 'top', 'random' or 'weighted' (default). Defines if motif library input poses are chosen based on score, at random or random weighted by score.")
     argparser.add_argument("--screen_num_rfdiffusions", type=int, default=5, help="Number of backbones to generate per input path during screening.")
     argparser.add_argument("--screen_skip_mpnn_rlx_mpnn", action="store_true", help="Skip LigandMPNN-RELAX-LigandMPNN steps and just run LigandMPNN once before prediction with ESMFold. Faster, but lower success rates (only recommended for initial screening purposes).")
     argparser.add_argument("--screen_num_mpnn_sequences", type=int, default=20, help="Number of LigandMPNN sequences per backbone that should be generated and predicted with ESMFold post-RFdiffusion.")

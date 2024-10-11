@@ -397,7 +397,7 @@ def atoms_of_functional_groups():
 def sort_frags_df_by_score(frags_df, backbone_score_weight, rotamer_score_weight, frag_length):
 
     # calculate ratio of identical backbone fragments
-    frags_df['backbone_count'] = frags_df.groupby(['frag_identifier', 'frag_num'], sort=False).transform('size')
+    frags_df['backbone_count'] = frags_df.groupby('frag_identifier')['frag_num'].transform('nunique')
     frags_df['backbone_probability'] = frags_df['backbone_count'] / frags_df['frag_num'].nunique()
 
     df_list = []
@@ -1242,13 +1242,13 @@ def main(args):
         theozyme_residue = theozyme[0][chain][resnum]
 
         if args.covalent_bond:
-            if not args.ligand_chain:
+            if not args.ligands:
                 logging.warning("WARNING: Covalent bonds are only useful if ligand is present!")
             for cov_bond in args.covalent_bond.split(','):
                 if not cov_bond.split(':')[0] in [atom.name for atom in theozyme_residue.get_atoms()]:
                     raise KeyError(f"Could not find atom {cov_bond.split(':')[0]} from covalent bond {cov_bond} in residue {resname}!")
                 if not cov_bond.split(':')[1] in [atom.name for atom in ligand.get_atoms()]:
-                    raise KeyError(f"Could not find atom {cov_bond.split(':')[1]} from covalent bond {cov_bond} in ligand chain {args.ligand_chain}!")
+                    raise KeyError(f"Could not find atom {cov_bond.split(':')[1]} from covalent bond {cov_bond} in ligand {args.ligands}!")
                 
         if args.add_equivalent_func_groups:
             residue_identities = identify_residues_with_equivalent_func_groups(theozyme_residue)
@@ -1452,7 +1452,7 @@ def main(args):
                     covalent_bonds = ",".join([exchange_covalent(covalent_bond) for covalent_bond in covalent_bonds.split(",")])
                 if covalent_bonds and rot['flipped'] == True:
                     covalent_bonds = ",".join([flip_covalent(covalent_bond, rot["AA"]) for covalent_bond in covalent_bonds.split(",")])
-                row = pd.Series({'model_num': frag_num, 'rotamer_pos': pos, 'AAs': df['AA'].to_list(), 'frag_length': len(df.index), 'backbone_score': df['backbone_score'].mean(), 'fragment_score': df['fragment_score'].mean(), 'rotamer_probability': rot['probability'], 'covalent_bond': covalent_bonds, 'rotamer_score': df['rotamer_score'].mean()})
+                row = pd.Series({'model_num': frag_num, 'rotamer_pos': pos, 'AAs': df['AA'].to_list(), 'frag_length': len(df.index), 'backbone_score': df['backbone_score'].mean(), 'fragment_score': df['fragment_score'].mean(), 'rotamer_probability': rot['probability'], 'phi_psi_occurrence': rot['phi_psi_occurrence'], 'backbone_probability': df['backbone_probability'].mean(), 'covalent_bond': covalent_bonds, 'rotamer_score': df['rotamer_score'].mean()})
                 model = Model.Model(frag_num)
                 model.add(frag)
                 if ligand:
@@ -1485,7 +1485,7 @@ def main(args):
         #write output json to disk
         frags_info = pd.DataFrame(frags_info)
         frags_info['poses'] = os.path.abspath(filename_pdb)
-        frags_info['poses_description'] = f'{args.output_prefix}_{resname}'
+        frags_info['poses_description'] = f'{resname}'
         filename_json = os.path.join(working_dir, f'{resname}.json')
         log_and_print(f'Writing output json to {filename_json}.')
         frags_info.to_json(filename_json)

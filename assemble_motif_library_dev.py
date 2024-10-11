@@ -8,10 +8,11 @@ import logging
 from pathlib import Path
 import time
 import Bio.PDB
-from Bio.PDB import Structure, Model
+from Bio.PDB import Structure, Model, Chain
 import pandas as pd
 import numpy as np
 import shutil
+import glob
 
 # import protflow
 from protflow.utils.biopython_tools import load_structure_from_pdbfile, save_structure_to_pdbfile
@@ -20,6 +21,7 @@ from protflow.utils.plotting import violinplot_multiple_cols, violinplot_multipl
 from protflow.utils.utils import vdw_radii
 from protflow.utils.openbabel_tools import openbabel_fileconverter
 from protflow.poses import description_from_path
+from protflow.residues import from_dict
 from protflow.config import PROTFLOW_ENV
 
 
@@ -386,11 +388,12 @@ def create_pdbs(df:pd.DataFrame, output_dir, ligand, channel_path, preserve_chan
         filename = "-".join(sorted(filename, key=lambda x: row['path_order'].index(x[0]))) + ".pdb"
         filename = os.path.abspath(os.path.join(output_dir, filename))
         struct = Structure.Structure('out')
-        model = Model.Model(0)
+        struct.add(model := Model.Model(0))
+        model.add(chain := Chain.Chain("Z"))
         for frag in frag_chains:
             model.add(frag)
-        model.add(ligand)
-        struct.add(model)
+        for lig in ligand:
+            chain.add(lig)
         if channel_path and preserve_channel_coordinates:
             model.add(load_structure_from_pdbfile(channel_path)["Q"])
         elif channel_path:
@@ -404,18 +407,9 @@ def chain_alphabet():
     return ['A', 'B', 'C', 'D', 'E', 'F', 'G', 'H', 'I', 'J', 'K', 'L', 'M', 'N', 'O', 'P', 'Q', 'R', 'S', 'T', 'U', 'V', 'W', 'X', 'Y']
 
 
-def import_fragment_json_files(json_files:list=None, json_prefix:str=None):
-    #import json files
-    if json_files:
-        input_jsons = [os.path.abspath(json) for json in args.json_files]
-    if json_prefix:
-        json_prefix = os.path.abspath(json_prefix)
-        path, prefix = os.path.split(json_prefix)
-        input_jsons = [os.path.join(path, file) for file in os.listdir(path) if file.endswith('.json') and file.startswith(prefix)]
-        if not input_jsons:
-            logging.error(f"Could not find any .json files with prefix {prefix}!")
-            raise RuntimeError(f"Could not find any .json files with prefix {prefix}!")
-
+def import_fragment_json_files(input_dir:str):
+    #import json files:
+    input_jsons = glob.glob(os.path.join(input_dir, "*.json"))
     input_jsons = sorted(list(set(input_jsons)))
 
     inputs = []
@@ -514,11 +508,10 @@ def get_protein_atoms(pose: Structure, ligand_chain:str=None, atms:list=None) ->
 
     return pose_atoms
 
-def sort_dataframe_groups_by_column(df:pd.DataFrame, group_col:str, sort_col:str, ascending:bool=True, filter_top_n:int=None) -> pd.DataFrame:
+def sort_dataframe_groups_by_column(df:pd.DataFrame, group_col:str, sort_col:str, method="mean", ascending:bool=True, filter_top_n:int=None) -> pd.DataFrame:
     # group by group column and calculate mean values
-    df_sorted = df.groupby(group_col, sort=False).agg({sort_col: "mean"}).sort_values(sort_col, ascending=ascending)
-    # sort by sort_col
-    df_sorted.sort_values(sort_col, ascending=ascending, inplace=True)
+    df_sorted = df.groupby(group_col, sort=False).agg({sort_col: method}).sort_values(sort_col, ascending=ascending)
+    # filter 
     if filter_top_n:
         df_sorted = df_sorted.head(filter_top_n)
     # merge back with original dataframe
@@ -546,11 +539,11 @@ def main(args):
     '''
 
     # create output directory
-    working_dir = os.path.join(args.working_dir, f"{args.output_prefix}_motif_library_assembly")
+    working_dir = os.path.join(args.working_dir, f"{args.output_prefix}_motif_library_assembly" if args.output_prefix else "motif_library_assembly")
     os.makedirs(working_dir, exist_ok=True)
 
     # set up logging
-    logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(levelname)s - %(message)s', filename=os.path.join(working_dir, f"{args.output_prefix}_assembly.log"))
+    logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(levelname)s - %(message)s', filename=os.path.join(working_dir, "assembly.log"))
     cmd = ''
     for key, value in vars(args).items():
         cmd += f'--{key} {value} '
@@ -566,14 +559,10 @@ def main(args):
     channels_dir = os.path.join(database_dir, "channel_placeholder")
 
     # check if output already exists
-    out_json = os.path.join(args.working_dir, f'{args.output_prefix}_selected_paths.json')
+    out_json = os.path.join(args.working_dir, f'{args.output_prefix}_selected_paths.json' if args.output_prefix else "selected_paths.json")
     if os.path.exists(out_json):
         logging.error(f'Output file already exists at {out_json}!')
         raise RuntimeError(f'Output file already exists at {out_json}!')
-    
-    if not args.json_files and not args.json_prefix:
-        logging.error('Either --json_files or --json_prefix must be specified!')
-        raise RuntimeError('Either --json_files or --json_prefix must be specified!')
 
     # detect if channel should be added to assemblies
     if args.no_channel_placeholder:
@@ -601,12 +590,11 @@ def main(args):
         logging.error(f"Jobstarter must be either 'SbatchArray' or 'Local', not {args.jobstarter}!")
         raise KeyError(f"Jobstarter must be either 'SbatchArray' or 'Local', not {args.jobstarter}!")
 
-    in_df = import_fragment_json_files(args.json_files, args.json_prefix)
-
+    in_df = import_fragment_json_files(args.input_dir)
 
     ################## CLASH DETECTION ##########################
 
-    clash_dir = os.path.join(working_dir, f'{args.output_prefix}_clash_check')
+    clash_dir = os.path.join(working_dir, 'clash_check')
     os.makedirs(clash_dir, exist_ok=True)
 
     grouped_df = in_df.groupby('poses', sort=False)
@@ -637,7 +625,7 @@ def main(args):
             raise RuntimeError(f'Could not find any models that are not clashing with channel chain for {pose}. Adjust clash detection parameters or move channel!')
         pose_df = pd.DataFrame(model_dfs)
         structdict[struct.id] = struct
-        filename = os.path.join(clash_dir, f'{args.output_prefix}_{struct.id}_rechained.pdb')
+        filename = os.path.join(clash_dir, f'{struct.id}_rechained.pdb')
         struct.id = filename
         save_structure_to_pdbfile(pose=struct, save_path=filename, multimodel=True)
         pose_df['poses'] = os.path.abspath(filename)
@@ -650,9 +638,9 @@ def main(args):
             pose_df['covalent_bond'] = None
         df_list.append(pose_df)
 
-    ligands = struct[0]['Z']
-    for res in ligands.get_residues():
-        res.id = ("H", res.id[1], res.id[2])
+    ligands = [lig for lig in struct[0]['Z'].get_residues()]
+    for lig in ligands:
+        lig.id = ("H", lig.id[1], lig.id[2])
 
     grouped_df = pd.concat(df_list).groupby('poses', sort=False)
 
@@ -665,7 +653,6 @@ def main(args):
     init = time.time()
 
     combinations = itertools.product(*[[row for index, row in pose_df.iterrows()] for _, pose_df in grouped_df])
-
     log_and_print(f'Performing pairwise clash detection...')
     ensemble_dfs = run_clash_detection(combinations=combinations, num_combs=num_combs, directory=clash_dir, bb_multiplier=args.fragment_backbone_clash_detection_vdw_multiplier, sc_multiplier=args.fragment_fragment_clash_detection_vdw_multiplier, database=database_dir, script_path=os.path.join(utils_dir, "clash_detection.py"), jobstarter=jobstarter)
 
@@ -694,7 +681,7 @@ def main(args):
     log_and_print("Sorting completed.")
 
     # plot data
-    plotpath = os.path.join(working_dir, f"{args.output_prefix}_clash_filter.png")
+    plotpath = os.path.join(working_dir, "clash_filter.png")
     log_and_print(f"Plotting data at {plotpath}.")
     dfs = [post_clash.groupby('ensemble_num', sort=False).mean(numeric_only=True), score_df]
     df_names = ['filtered', 'unfiltered']
@@ -714,14 +701,14 @@ def main(args):
         col_names = ['ensemble score', 'fragment score', 'backbone score', 'rotamer score']
         y_labels = ['score [AU]', 'score [AU]', 'score [AU]', 'score [AU]']
         dims = [(-0.05, 1.05), (-0.05, 1.05), (-0.05, 1.05), (-0.05, 1.05)]
-        plotpath = os.path.join(working_dir, f"{args.output_prefix}_master_input_filter.png")
+        plotpath = os.path.join(working_dir, "master_input_filter.png")
         violinplot_multiple_cols_dfs(dfs, df_names=df_names, cols=cols, titles=col_names, y_labels=y_labels, dims=dims, out_path=plotpath)
 
 
         #### check for matches in database for top ensembles ####
 
         log_and_print(f'Writing input ensembles to disk...')
-        master_dir = os.path.join(working_dir, f'{args.output_prefix}_master')
+        master_dir = os.path.join(working_dir, 'master')
         os.makedirs(master_dir, exist_ok=True)
         os.makedirs(f"{master_dir}/pdbs/", exist_ok=True)
         filenames = []
@@ -755,20 +742,20 @@ def main(args):
         violinplot_multiple_cols(post_match, cols=['match_score', 'path_num_matches', 'ensemble_num_matches'], titles=['match score', f'path matches\n< {rmsd_cutoff}', f'ensemble matches\n< {rmsd_cutoff}'], y_labels=['AU', '#', '#'], dims=[(-0.05, 1.05), (post_match['path_num_matches'].max() * -0.05, post_match['path_num_matches'].max() * 1.05 ), (post_match['ensemble_num_matches'].max() * -0.05, post_match['ensemble_num_matches'].max() * 1.05 )], out_path=os.path.join(working_dir, f"{args.output_prefix}_master_matches_<_{rmsd_cutoff}.png"), show_fig=False)
 
 
-        path_dfs = post_match.copy()
+        path_df = post_match.copy()
         if args.match_cutoff:
-            passed = int(len(path_dfs.index) / len(chains))
-            path_dfs = path_dfs[path_dfs['ensemble_num_matches'] >= args.match_cutoff]
-            filtered = int(len(path_dfs.index) / len(chains))
+            passed = int(len(path_df.index) / len(chains))
+            path_df = path_df[path_df['ensemble_num_matches'] >= args.match_cutoff]
+            filtered = int(len(path_df.index) / len(chains))
             log_and_print(f'Removed {passed - filtered} paths with less than {args.match_cutoff} ensemble matches below {rmsd_cutoff} A. Remaining paths: {filtered}.')
-            dfs = [path_dfs, post_match]
+            dfs = [path_df, post_match]
             df_names = ['filtered', 'unfiltered']
             cols = ['path_score', 'match_score', 'ensemble_score', 'fragment_score', 'backbone_score', 'rotamer_score']
             col_names = ['path score', 'master score', 'ensemble score', 'fragment score', 'backbone score', 'rotamer score']
             y_labels = ['score [AU]', 'score [AU]', 'score [AU]', 'score [AU]', 'score [AU]', 'score [AU]']
             dims = [(-0.05, 1.05), (-0.05, 1.05), (-0.05, 1.05), (-0.05, 1.05), (-0.05, 1.05), (-0.05, 1.05)]
             plotpath = os.path.join(working_dir, f"{args.output_prefix}_num_matches_<_{args.match_cutoff}_filter.png")
-            violinplot_multiple_cols(path_dfs, cols=['match_score', 'path_num_matches', 'ensemble_num_matches', 'mean_match_rmsd', 'min_match_rmsd'], titles=['match score', f'path\nmatches < {rmsd_cutoff}', f'ensemble\nmatches < {rmsd_cutoff}', 'ensemble\nmean match rmsd', 'ensemble\nminimum match rmsd'], y_labels=['AU', '#', '#', 'A', 'A'], dims=[(-0.05, 1.05), (path_dfs['path_num_matches'].min() - (path_dfs['path_num_matches'].max() - path_dfs['path_num_matches'].min()) * 0.05, (path_dfs['path_num_matches'].max() + (path_dfs['path_num_matches'].max() - path_dfs['path_num_matches'].min()) * 0.05)), (args.match_cutoff - (path_dfs['path_num_matches'].max() - args.match_cutoff) * 0.05, (path_dfs['ensemble_num_matches'].max() + (path_dfs['ensemble_num_matches'].max() - args.match_cutoff) * 0.05)), (rmsd_cutoff * -0.05, rmsd_cutoff * 1.05), (rmsd_cutoff * -0.05, rmsd_cutoff * 1.05)], out_path=os.path.join(working_dir, f"{args.output_prefix}_master_matches_<_{rmsd_cutoff}_matchfilter.png"), show_fig=False)
+            violinplot_multiple_cols(path_df, cols=['match_score', 'path_num_matches', 'ensemble_num_matches', 'mean_match_rmsd', 'min_match_rmsd'], titles=['match score', f'path\nmatches < {rmsd_cutoff}', f'ensemble\nmatches < {rmsd_cutoff}', 'ensemble\nmean match rmsd', 'ensemble\nminimum match rmsd'], y_labels=['AU', '#', '#', 'A', 'A'], dims=[(-0.05, 1.05), (path_df['path_num_matches'].min() - (path_df['path_num_matches'].max() - path_df['path_num_matches'].min()) * 0.05, (path_df['path_num_matches'].max() + (path_df['path_num_matches'].max() - path_df['path_num_matches'].min()) * 0.05)), (args.match_cutoff - (path_df['path_num_matches'].max() - args.match_cutoff) * 0.05, (path_df['ensemble_num_matches'].max() + (path_df['ensemble_num_matches'].max() - args.match_cutoff) * 0.05)), (rmsd_cutoff * -0.05, rmsd_cutoff * 1.05), (rmsd_cutoff * -0.05, rmsd_cutoff * 1.05)], out_path=os.path.join(working_dir, f"{args.output_prefix}_master_matches_<_{rmsd_cutoff}_matchfilter.png"), show_fig=False)
             violinplot_multiple_cols_dfs(dfs, df_names=df_names, cols=cols, titles=col_names, y_labels=y_labels, dims=dims, out_path=plotpath, show_fig=False)
 
     else:
@@ -776,10 +763,12 @@ def main(args):
         post_clash['match_score'] = 0
         post_clash['path_score'] = post_clash['ensemble_score']
         post_clash['path_num_matches'] = 0
-
+        # filter for top ensembles to speed things up, since paths within an ensemble have the same score if not running master
         paths = ["".join(perm) for perm in itertools.permutations(chains)]
+        post_clash = sort_dataframe_groups_by_column(df=post_clash, group_col="ensemble_num", sort_col="path_score", ascending=False, filter_top_n=1 + int(args.max_out / len(paths)))
         dfs = [post_clash.assign(path_name=post_clash['ensemble_num'].astype(str)+"_" + p) for p in paths]
-        path_dfs = pd.concat(dfs, ignore_index=True)
+        path_df = pd.concat(dfs, ignore_index=True)
+        print(len(path_df.index))
         log_and_print("Done creating paths.")
 
     pdb_dir = os.path.join(working_dir, "motif_library")
@@ -787,15 +776,18 @@ def main(args):
 
     if args.max_paths_per_ensemble:
         df_list = []
-        for _, df in path_dfs.groupby('ensemble_num', sort=False):
+        for _, df in path_df.groupby('ensemble_num', sort=False):
             df = sort_dataframe_groups_by_column(df, group_col="path_name", sort_col="path_score", ascending=False, filter_top_n=args.max_paths_per_ensemble)
             df_list.append(df)
-        path_dfs = pd.concat(df_list)
+        path_df = pd.concat(df_list)
 
+    print(len(path_df))
     # select top n paths
     log_and_print(f"Selecting top {args.max_out} paths...")
-    top_path_dfs = sort_dataframe_groups_by_column(df=path_dfs, group_col="path_name", sort_col="path_score", ascending=False, filter_top_n=args.max_out)
-    log_and_print(f"Found {int(len(top_path_dfs.index)/len(chains))} paths.")
+    top_path_df = sort_dataframe_groups_by_column(df=path_df, group_col="path_name", sort_col="path_score", ascending=False, filter_top_n=args.max_out)
+    print(len(top_path_df))
+
+    log_and_print(f"Found {int(len(top_path_df.index)/len(chains))} paths.")
 
     # create path dataframe
     log_and_print(f"Creating path dataframe...")
@@ -807,23 +799,28 @@ def main(args):
                  'path_score': 'mean', 
                  'backbone_probability': [("backbone_probability", concat_columns), ("backbone_probability_mean", "mean")],
                  'rotamer_probability': [("rotamer_probability", concat_columns), ("rotamer_probability_mean", "mean")],
-                 'phi_psi_occurrence': [("phi_psi_occurrence", concat_columns), ("phi_psi_occurrence_mean", "mean")]},
+                 'phi_psi_occurrence': [("phi_psi_occurrence", concat_columns), ("phi_psi_occurrence_mean", "mean")]}
 
-    selected_paths = top_path_dfs.groupby('path_name', sort=False).agg(aggregate).reset_index(names=["path_name"])
+    selected_paths = top_path_df.groupby('path_name', sort=False).agg(aggregate).reset_index(names=["path_name"])
     selected_paths.columns = ['path_name', 'poses', 'chain_id', 'model_num', 'rotamer_pos', 'frag_length',
                                'path_score', 'backbone_probability', 'backbone_probability_mean', 'rotamer_probability',
-                               'rotamer_probability_mean''phi_psi_occurrence', 'phi_psi_occurrence_mean']
+                               'rotamer_probability_mean','phi_psi_occurrence', 'phi_psi_occurrence_mean']
     
+    # create residue selections
     selected_paths["fixed_residues"] = selected_paths.apply(lambda row: split_str_to_dict(row['chain_id'], row['rotamer_pos'], sep=","), axis=1)
+    selected_paths["fixed_residues"] = selected_paths.apply(lambda row: from_dict(row["fixed_residues"]), axis=1)
     selected_paths["motif_residues"] = selected_paths.apply(lambda row: create_motif_residues(row['chain_id'], row['frag_length'], sep=","), axis=1)
+    selected_paths["motif_residues"] = selected_paths.apply(lambda row: from_dict(row["motif_residues"]), axis=1)
+    selected_paths["ligand_motif"] = [from_dict({"Z":[i+1 for i, _ in enumerate(ligands)]}) for id in selected_paths.index]
+
     selected_paths["path_order"] = selected_paths['path_name'].str.split('_').str[-1]
     selected_paths["motif_contigs"] = selected_paths.apply(lambda row: create_motif_contig(row['chain_id'], row['frag_length'], row['path_order'], sep=","), axis=1)
     if channel_path:
-        selected_paths["channel_contig"] = selected_paths.apply(lambda row: create_motif_contig("Q", channel_size, "Q", sep=","), axis=1)
+        selected_paths["channel_contig"] = selected_paths.apply(lambda row: create_motif_contig("Q", str(channel_size), "Q", sep=","), axis=1)
 
     # combine multiple ligands into one for rfdiffusion
     ligand = copy.deepcopy(ligands)
-    for lig in ligand.get_residues():
+    for lig in ligand:
         lig.resname = "LIG"
 
     lib_path = os.path.join(working_dir, "motif_library")
@@ -835,24 +832,34 @@ def main(args):
 
 
     log_and_print(f"Writing data to {out_json}")
-    selected_paths.to_json(out_json)
 
     ligand_dir = os.path.join(working_dir, 'ligand')
     os.makedirs(ligand_dir, exist_ok=True)
-    for index, ligand in enumerate(ligands.get_residues()):
-        ligand_pdbfile = save_structure_to_pdbfile(ligand, lig_path:=os.path.join(ligand_dir, f"LG{index+1}.pdb"))
+    params_paths = []
+    ligand_paths = []
+    for index, ligand in enumerate(ligands):
+        ligand_pdbfile = save_structure_to_pdbfile(ligand, lig_path:=os.path.abspath(os.path.join(ligand_dir, f"LG{index+1}.pdb")))
         lig_name = ligand.get_resname()
+        ligand_paths.append(lig_path)
         if len(list(ligand.get_atoms())) > 2:
             # store ligand as .mol file for rosetta .molfile-to-params.py
             log_and_print(f"Running 'molfile_to_params.py' to generate params file for Rosetta.")
             lig_molfile = openbabel_fileconverter(input_file=lig_path, output_file=lig_path.replace(".pdb", ".mol2"), input_format="pdb", output_format=".mol2")
             cmd = f"{os.path.join(PROTFLOW_ENV, "python")} {os.path.join(utils_dir, 'molfile_to_params.py')} -n {lig_name} -p {ligand_dir}/LG{index+1} {lig_molfile} --keep-names --clobber --chain=Z"
             LocalJobStarter().start(cmds=[cmd], jobname="moltoparams", output_path=ligand_dir)
-            lig_path = f"{ligand_dir}/LG{index+1}_0001.pdb"
+            params_paths.append(lig_path.replace(".pdb", ".params"))
         else:
             log_and_print(f"Ligand at {ligand_pdbfile} contains less than 3 atoms. No Rosetta Params file can be written for it.")
 
-    violinplot_multiple_cols(selected_paths, cols=['backbone_probability_mean', 'phi_psi_occurrence_mean', 'rotamer_probability_mean'], titles=['mean backbone\nprobability', 'mean phi/psi\nprobability' 'mean rotamer\nprobability'], y_labels=['probability', 'probability', 'probability'], out_path=os.path.join(working_dir, f"{args.output_prefix}_selected_paths_info.png"), show_fig=False)
+    if params_paths:
+        selected_paths["params_path"] = ",".join(params_paths)
+    if ligand_paths:
+        selected_paths["ligand_path"] = ",".join(ligand_paths)
+
+    # write output json
+    selected_paths.to_json(out_json)
+
+    violinplot_multiple_cols(selected_paths, cols=['backbone_probability_mean', 'phi_psi_occurrence_mean', 'rotamer_probability_mean'], titles=['mean backbone\nprobability', 'mean phi/psi\nprobability', 'mean rotamer\nprobability'], y_labels=['probability', 'probability', 'probability'], out_path=os.path.join(working_dir, "selected_paths_info.png"), show_fig=False)
 
     log_and_print(f'Done!')
 
@@ -864,9 +871,8 @@ if __name__ == "__main__":
     argparser.add_argument("--riff_diff_dir", default=".", type=str, help="Path to the riff_diff directory. This is workaround and will hopefully be resolved later.")
 
     # mandatory input
-    argparser.add_argument("--json_prefix", type=str, default=None, nargs='?', help="Prefix for all json files that should be combined (including path, e.g. './output/mo6_'). Alternative to --json_files")
-    argparser.add_argument("--json_files", default=None, nargs='*', help="List of json files that contain fragment information. Alternative to --json_prefix.")
-    argparser.add_argument("--output_prefix", type=str, required=True, help="Prefix for output.")
+    argparser.add_argument("--input_dir", type=str, required=True, help="Prefix for all json files that should be combined (including path, e.g. './output/mo6_'). Alternative to --json_files")
+    argparser.add_argument("--output_prefix", type=str, default=None, help="Prefix for output.")
     argparser.add_argument("--working_dir", type=str, required=True, help="Path to working directory. Has to contain the input pdb files, otherwise run_ensemble_evaluator.py will not work!")
 
     # stuff you might want to adjust
