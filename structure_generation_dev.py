@@ -582,8 +582,9 @@ def main(args):
     ligandmpnn_options = f"--ligand_mpnn_use_side_chain_context 1 {args.ligandmpnn_options if args.ligandmpnn_options else ""}"
 
     # set up general rosetta options
-    bb_opt_options = f"-parser:protocol {args.bbopt_script} -beta"
-    fr_options = f"-parser:protocol {args.fastrelax_script} -beta"
+
+    bb_opt_options = f"-parser:protocol {os.path.abspath(os.path.join(args.riff_diff_dir, 'utils', "fr_constrained.xml"))} -beta"
+    fr_options = f"-parser:protocol {os.path.abspath(os.path.join(protflow.config.AUXILIARY_RUNNER_SCRIPTS_DIR, 'fastrelax_sap.xml'))} -beta"
     if params:
         fr_options = fr_options + f" -extra_res_fa {' '.join(params)}"
         bb_opt_options = bb_opt_options + f" -extra_res_fa {' '.join(params)}"
@@ -591,7 +592,7 @@ def main(args):
     ############################################## SCREENING ######################################################
 
 
-    if not args.ref_input_json and not args.eval_input_json and not args.variants_input_json:
+    if args.screen_input_json:
         screen_prefix = f"{args.screen_prefix}_" if args.screen_prefix else ""
         screening_dir = os.path.join(args.working_dir, f"{screen_prefix}screening")
         os.makedirs(screening_dir, exist_ok=True)
@@ -660,7 +661,7 @@ def main(args):
             backbones.set_work_dir(os.path.join(screening_dir, prefix))
 
             # run diffusion
-            diffusion_options = f"diffuser.T={str(args.rfdiffusion_timesteps)} potentials.guide_scale=5 potentials.guiding_potentials=[\\'type:substrate_contacts,weight:0\\',\\'type:custom_recenter_ROG,weight:{setting[0]},rog_weight:0,distance:{setting[1]}{recenter}\\'] potentials.guide_decay=quadratic contigmap.length={args.total_length}-{args.total_length} potentials.substrate=LIG"
+            diffusion_options = f"diffuser.T=50 potentials.guide_scale=5 potentials.guiding_potentials=[\\'type:substrate_contacts,weight:0\\',\\'type:custom_recenter_ROG,weight:{setting[0]},rog_weight:0,distance:{setting[1]}{recenter}\\'] potentials.guide_decay=quadratic contigmap.length={args.total_length}-{args.total_length} potentials.substrate=LIG"
             backbones = rfdiffusion.run(
                 poses=backbones,
                 prefix="rfdiffusion",
@@ -828,17 +829,8 @@ def main(args):
                 poses = backbones,
                 prefix = "fastrelax",
                 rosetta_application="rosetta_scripts.default.linuxgccrelease",
-                nstruct = 3,
-                options = f"-parser:protocol {args.fastrelax_script} -beta"
-            )
-
-            # filter down after fastrelax
-            backbones.filter_poses_by_rank(
-                n = 1,
-                score_col = "fastrelax_total_score",
-                remove_layers = 1,
-                prefix = "fastrelax_filter",
-                plot = True
+                nstruct = 1,
+                options = fr_options
             )
 
             ############################################# BACKBONE FILTER ########################################################
@@ -930,9 +922,11 @@ def main(args):
         if args.skip_refinement:
             logging.info(f"Skipping refinement. Run concluded, output can be found in {results_dir}")
             sys.exit(1)
+        else:
+            args.ref_input_json = backbones.scorefile
     
     ############################################# REFINEMENT ########################################################
-    if args.ref_input_json or (not args.ref_input_json and not args.eval_input_json and not args.variants_input_json):
+    if args.ref_input_json:
         ref_prefix = f"{args.ref_prefix}_" if args.ref_prefix else ""
 
         refinement_dir = os.path.join(args.working_dir, f"{ref_prefix}refinement")
@@ -1193,9 +1187,11 @@ def main(args):
         if args.skip_evaluation:
             logging.info(f"Skipping evaluation. Run concluded, per-backbone output can be found in {os.path.join(backbones.work_dir, f'cycle_{cycle}_results')}. Overall results can be found in {refinement_results_dir}.")
             sys.exit(1)
+        else:
+            args.eval_input_json = backbones.scorefile
 
     ########################### FINAL EVALUATION ###########################
-    if args.eval_input_json or not args.variants_input_json:
+    if args.eval_input_json:
         if args.eval_prefix: eval_prefix = f"{args.eval_prefix}_"
         else: eval_prefix = args.ref_prefix if args.ref_prefix else ""
 
@@ -1681,6 +1677,8 @@ def main(args):
 if __name__ == "__main__":
     import argparse
     argparser = argparse.ArgumentParser(formatter_class=argparse.ArgumentDefaultsHelpFormatter)
+
+    argparser.add_argument("--riff_diff_dir", type=str, default=".", help="output_directory")
     argparser.add_argument("--working_dir", type=str, required=True, help="output_directory")
 
     # general optionals
@@ -1748,26 +1746,19 @@ if __name__ == "__main__":
     argparser.add_argument("--variants_evaluation_input_poses", type=int, default=200, help="Number of poses per unique backbone that should go into the evaluation step of variant generation.")
 
     # rfdiffusion optionals
-    argparser.add_argument("--recenter", type=str, default=None, help="Point (xyz) in input pdb towards the diffusion should be recentered. Set strength of recentering with --decentralize_distance. example: --recenter=-13.123;34.84;2.3209")
-    argparser.add_argument("--flanking", type=str, default="split", help="How flanking should be set. Always leave on split. nterm or cterm also valid options.")
+    argparser.add_argument("--recenter", type=str, default=None, help="Point (xyz) in input pdb towards the diffusion should be recentered. example: --recenter=-13.123;34.84;2.3209")
+    argparser.add_argument("--flanking", type=str, default="split", help="How flanking should be set. nterm or cterm also valid options.")
     argparser.add_argument("--flanker_length", type=int, default=30, help="Set Length of Flanking regions. For active_site model: 30 (recommended at least).")
     argparser.add_argument("--total_length", type=int, default=200, help="Total length of protein to diffuse. This includes flanker, linkers and input fragments.")
-    argparser.add_argument("--linker_length", type=str, default="auto", help="linker length, total length. How long should the linkers be?")
-    argparser.add_argument("--rfdiffusion_timesteps", type=int, default=50, help="Specify how many diffusion timesteps to run. 50 recommended. don't change")
-    argparser.add_argument("--model", type=str, default="default", help="{default,active_site} Choose which model to use for RFdiffusion (active site or regular model).")
+    #argparser.add_argument("--linker_length", type=str, default="auto", help="linker length, total length. How long should the linkers be?")
 
     # ligandmpnn optionals
     argparser.add_argument("--ligandmpnn_options", type=str, default=None, help="Options for ligandmpnn runs.")
-
-    # fastrelax
-    argparser.add_argument("--fastrelax_script", type=str, default=f"{protflow.config.AUXILIARY_RUNNER_SCRIPTS_DIR}/fastrelax_sap.xml", help="Specify path to fastrelax script that you would like to use.")
-    argparser.add_argument("--bbopt_script", type=str, default="/home/tripp/riff_diff/rosetta/fr_constrained.xml", help="Path to Rosetta xml script used during refinement.")
 
     # filtering options
     argparser.add_argument("--rfdiffusion_max_clashes", type=int, default=20, help="Filter rfdiffusion output for ligand-backbone clashes before passing poses to LigandMPNN.")
     argparser.add_argument("--rfdiffusion_min_ligand_contacts", type=float, default=7, help="Filter rfdiffusion output for number of ligand contacts (Ca atoms within 8A divided by number of ligand atoms) before passing poses to LigandMPNN.")
     argparser.add_argument("--rfdiffusion_max_rog", type=float, default=19, help="Filter rfdiffusion output for radius of gyration before passing poses to LigandMPNN.")
-    argparser.add_argument("--max_rog", type=float, default=18, help="Maximum Radius of Gyration for the backbone to be a successful design.")
     argparser.add_argument("--min_ligand_contacts", type=float, default=3, help="Minimum number of ligand contacts per ligand heavyatom for the design to be a success.")
     argparser.add_argument("--ligand_clash_factor", type=float, default=0.8, help="Factor for determining clashes. Set to 0 if ligand clashes should be ignored.")
 
