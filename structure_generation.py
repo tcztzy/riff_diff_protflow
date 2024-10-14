@@ -1739,7 +1739,6 @@ if __name__ == "__main__":
     argparser.add_argument("--flanking", type=str, default="split", help="How flanking should be set. nterm or cterm also valid options.")
     argparser.add_argument("--flanker_length", type=int, default=30, help="Set Length of Flanking regions. For active_site model: 30 (recommended at least).")
     argparser.add_argument("--total_length", type=int, default=200, help="Total length of protein to diffuse. This includes flanker, linkers and input fragments.")
-    #argparser.add_argument("--linker_length", type=str, default="auto", help="linker length, total length. How long should the linkers be?")
 
     # ligandmpnn optionals
     argparser.add_argument("--ligandmpnn_options", type=str, default=None, help="Options for ligandmpnn runs.")
