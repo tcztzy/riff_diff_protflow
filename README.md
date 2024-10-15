@@ -4,11 +4,11 @@ ProtFlow Implementation of the RiffDiff pipeline to design enzymes from theozyme
 # INSTALLATION
 
 The ProtFlow python library is required to run Riff-Diff. You can download it here: https://github.com/mabr3112/ProtFlow together with installation instructions. Required protein design tools for Riff-Diff that need to be installed on your machine:
-  - RFdiffusion (https://github.com/RosettaCommons/RFdiffusion)
-  - ESMFold (https://github.com/facebookresearch/esm)
-  - Rosetta (https://github.com/RosettaCommons/rosetta)
+  - RFdiffusion (https://github.com/RosettaCommons/RFdiffusion, tested for v1.1.0 RFdiffusion Python Module)
+  - ESMFold (https://github.com/facebookresearch/esm, tested for ESM-2 Public Release v1.0.3)
+  - Rosetta (https://github.com/RosettaCommons/rosetta, tested for Rosetta 3.13)
   - LigandMPNN (https://github.com/dauparas/LigandMPNN)
-  - ColabFold (https://github.com/YoshitakaMo/localcolabfold)
+  - ColabFold (https://github.com/YoshitakaMo/localcolabfold, tested for v1.5.5)
   - AttnPacker (optional, https://github.com/MattMcPartlon/AttnPacker)
 
 Make sure all of these are properly configured with ProtFlow (added to the .config file!)
