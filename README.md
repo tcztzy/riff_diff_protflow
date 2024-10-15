@@ -110,3 +110,7 @@ The output is is XYZ.
 
 ## Stage 4: Diversification
 This is an optional stage. It is used to diversify sequences for successful backbones and to fine-tune active sites. You can manually provide a list of mutations you want to introduce for each input structure (for instance, to open channels that are blocked by a sidechain).
+
+
+# DISCLAIMER
+This repository contains code from https://github.com/RosettaCommons/RFdiffusion (potentials.py) and https://github.com/RosettaCommons/rosetta (molfile_to_params.py and dependencies)
