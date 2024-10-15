@@ -1,5 +1,3 @@
-#!/home/tripp/mambaforge/envs/protflow_new/bin/python
-
 import os
 import sys
 import itertools

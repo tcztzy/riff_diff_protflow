@@ -1,5 +1,3 @@
-#!/home/tripp/mambaforge/envs/protflow_new/bin/python
-
 import logging
 import os
 import sys
@@ -1150,9 +1148,9 @@ def main(args):
 
     start = time.time()
 
-    working_dir = os.path.join(args.working_dir, f"{args.output_prefix}_fragments")
+    working_dir = os.path.join(args.working_dir, f"{args.output_prefix}_fragments" if args.output_prefix else "fragments")
     os.makedirs(working_dir, exist_ok=True)
-    logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(levelname)s - %(message)s', filename=os.path.join(working_dir, f"fragment_picker_{args.output_prefix}_{args.theozyme_resnums}.log"))
+    logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(levelname)s - %(message)s', filename=os.path.join(working_dir, f"fragment_picker_{args.theozyme_resnums}.log"))
     cmd = ''
     for key, value in vars(args).items():
         cmd += f'--{key} {value} '
@@ -1281,7 +1279,7 @@ def main(args):
             #print(rotlib)
 
             log_and_print(f"Found {len(rotlib.index)} rotamers in total.")
-            rotlibcsv = os.path.join(rotinfo_dir, args.output_prefix + f'_rotamers_{resname}_combined.csv')
+            rotlibcsv = os.path.join(rotinfo_dir, f'rotamers_{resname}_combined.csv')
             log_and_print(f"Writing phi/psi combinations to {rotlibcsv}.")
             rotlib.to_csv(rotlibcsv)
 
@@ -1320,7 +1318,7 @@ def main(args):
                 rotlib = normalize_col(rotlib, 'log_occurrence', scale=False)
                 rotlib = combine_normalized_scores(rotlib, 'rotamer_score', ['log_prob_normalized', 'log_occurrence_normalized'], [args.prob_weight, args.occurrence_weight], False, True)
                 log_and_print(f"Identifying most probable rotamers for residue {residue_identity}")
-                rotlib = identify_backbone_angles_suitable_for_rotamer(residue_identity, rotlib, rotinfo_dir, f'{args.output_prefix}_{resname}_', args.rot_sec_struct, args.phipsi_occurrence_cutoff, int(args.max_phi_psis / len(residue_identities)), args.rotamer_diff_to_best, args.rotamer_chi_binsize, args.rotamer_phipsi_binsize, args.prob_cutoff)
+                rotlib = identify_backbone_angles_suitable_for_rotamer(residue_identity, rotlib, rotinfo_dir, f'{resname}_', args.rot_sec_struct, args.phipsi_occurrence_cutoff, int(args.max_phi_psis / len(residue_identities)), args.rotamer_diff_to_best, args.rotamer_chi_binsize, args.rotamer_phipsi_binsize, args.prob_cutoff)
                 log_and_print(f"Found {len(rotlib.index)} phi/psi/chi combinations.")
                 rotlibs.append(rotlib)
 
@@ -1329,7 +1327,7 @@ def main(args):
             rotlib = normalize_col(rotlib, 'log_occurrence', scale=False)
             rotlib = combine_normalized_scores(rotlib, 'rotamer_score', ['log_prob_normalized', 'log_occurrence_normalized'], [args.prob_weight, args.occurrence_weight], False, True)
             rotlib = rotlib.sort_values('rotamer_score', ascending=False).reset_index(drop=True)
-            rotlibcsv = os.path.join(rotinfo_dir, args.output_prefix + f'_rotamers_{resname}_combined.csv')
+            rotlibcsv = os.path.join(rotinfo_dir, f'rotamers_{resname}_combined.csv')
             log_and_print(f"Writing phi/psi combinations to {rotlibcsv}.")
             rotlib.to_csv(rotlibcsv)
 
@@ -1339,7 +1337,7 @@ def main(args):
             else: raise KeyError("Jobstarter must be either 'SbatchArray' or 'Local'!")
 
             log_and_print(f"Identifying positions for rotamer insertion...")
-            rotamer_positions = identify_positions_for_rotamer_insertion(fraglib_path, rotlib, args.rot_sec_struct, args.phi_psi_bin, os.path.join(working_dir, "rotamer_positions"), os.path.join(utils_dir, "identify_positions_for_rotamer_insertion.py"), f"{args.output_prefix}_{resname}", args.chi_std_multiplier, jobstarter=jobstarter)
+            rotamer_positions = identify_positions_for_rotamer_insertion(fraglib_path, rotlib, args.rot_sec_struct, args.phi_psi_bin, os.path.join(working_dir, "rotamer_positions"), os.path.join(utils_dir, "identify_positions_for_rotamer_insertion.py"), resname, args.chi_std_multiplier, jobstarter=jobstarter)
             log_and_print(f"Found {len(rotamer_positions.index)} fitting positions.")
             log_and_print(f"Extracting fragments from rotamer positions...")
             frag_dict = extract_fragments(rotamer_positions, fraglib, frag_pos_to_replace, args.fragsize)
@@ -1375,7 +1373,7 @@ def main(args):
             combined = combined.groupby('frag_num', sort=False).mean(numeric_only=True)
 
             # visualize information about fragments
-            violinplot_multiple_cols(dataframe=combined, cols=['fragment_score', 'backbone_score', 'rotamer_score'], titles=['fragment score', 'backbone score', 'rotamer score'], y_labels=['AU', 'AU', 'AU'], dims=[(-0.05, 1.05), (-0.05, 1.05), (-0.05, 1.05)], out_path=os.path.join(fraginfo_dir, f"{args.output_prefix}_{resname}_pre_clash_filter.png"), show_fig=False)
+            violinplot_multiple_cols(dataframe=combined, cols=['fragment_score', 'backbone_score', 'rotamer_score'], titles=['fragment score', 'backbone score', 'rotamer score'], y_labels=['AU', 'AU', 'AU'], dims=[(-0.05, 1.05), (-0.05, 1.05), (-0.05, 1.05)], out_path=os.path.join(fraginfo_dir, f"{resname}_pre_clash_filter.png"), show_fig=False)
             del combined
 
         #################################### CREATE FRAGS, ATTACH ROTAMERS, FILTER ####################################
@@ -1472,7 +1470,7 @@ def main(args):
 
         #write fragment info to disk
         frags_table = pd.concat(frags_table)
-        frags_table_path = os.path.join(fraginfo_dir, args.output_prefix + f'_fragments_{resname}.csv')
+        frags_table_path = os.path.join(fraginfo_dir, f'fragments_{resname}.csv')
         log_and_print(f'Writing fragment details to {frags_table_path}.')
         frags_table.to_csv(frags_table_path)
 
@@ -1492,7 +1490,7 @@ def main(args):
 
         if args.pick_frags_from_db:
             combined = frags_table.groupby('frag_num', sort=False).mean(numeric_only=True)
-            violinplot_multiple_cols(combined, cols=['fragment_score', 'backbone_score', 'rotamer_score'], titles=['fragment score', 'backbone score', 'rotamer score'], y_labels=['AU', 'AU', 'AU'], dims=[(-0.05, 1.05), (-0.05, 1.05), (-0.05, 1.05)], out_path=os.path.join(fraginfo_dir, f"{args.output_prefix}_{resname}_post_filter.png"), show_fig=False)
+            violinplot_multiple_cols(combined, cols=['fragment_score', 'backbone_score', 'rotamer_score'], titles=['fragment score', 'backbone score', 'rotamer score'], y_labels=['AU', 'AU', 'AU'], dims=[(-0.05, 1.05), (-0.05, 1.05), (-0.05, 1.05)], out_path=os.path.join(fraginfo_dir, f"{resname}_post_filter.png"), show_fig=False)
         log_and_print(f"Done in {round(time.time() - start, 1)} seconds!")
 
 
@@ -1506,7 +1504,7 @@ if __name__ == "__main__":
     argparser.add_argument("--theozyme_pdb", type=str, required=True, help="Path to pdbfile containing theozyme, must contain all residues in chain A numbered from 1 to n, ligand must be in chain Z (if there is one).")
     argparser.add_argument("--theozyme_resnums", required=True, help="Comma-separated list of residue numbers with chain information (e.g. A25,A38,B188) in theozyme pdb to find fragments for.")
     argparser.add_argument("--working_dir", type=str, required=True, help="Output directory")
-    argparser.add_argument("--output_prefix", type=str, required=True, help="Prefix for all output files")
+    argparser.add_argument("--output_prefix", type=str, default=None, help="Prefix for all output files")
     argparser.add_argument("--ligands", type=str, required=True, help="Comma-separated list of ligands in the format X188,Z1.")
     
     # important parameters
@@ -1550,7 +1548,6 @@ if __name__ == "__main__":
     argparser.add_argument("--backbone_score_weight", type=float, default=1, help="Weight for importance of fragment backbone score (boltzman score of number of occurrences of similar fragments in the database) when sorting fragments.")
     argparser.add_argument("--rotamer_score_weight", type=float, default=1, help="Weight for importance of rotamer score (combined score of probability and occurrence) when sorting fragments.")
     argparser.add_argument("--chi_std_multiplier", type=float, default=2, help="Multiplier for chi angle standard deviation to check if rotamer in database fits to desired rotamer.")
-
 
     args = argparser.parse_args()
 

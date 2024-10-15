@@ -1,12 +1,8 @@
-#!/home/tripp/mambaforge/envs/protflow_new/bin/python
-
 #imports
 import json
 import logging
 import os
-import re
 import sys
-import glob
 import copy
 import itertools
 import shutil
@@ -84,7 +80,7 @@ def write_align_cmds(input_data: pd.Series, use_original_location=False, ref_mot
     cmds.append(f"select temp_ref_res, {write_pymol_motif_selection(ref_pose_name, input_data[ref_motif_col])}")
 
     # alignimpose inpaint_motif_residues:
-    cmds.append(f"align temp_ref_res, temp_motif_res")
+    #cmds.append(f"align temp_ref_res, temp_motif_res")
 
     # select fixed residues, show sticks and color
     cmds.append(f"select temp_cat_res, {write_pymol_motif_selection(input_data['poses_description'], input_data[target_catres_col])}")
@@ -311,7 +307,7 @@ def calculate_mean_scores(poses: Poses, scores: list, remove_layers: int=None):
         poses.calculate_mean_score(name=f"{score}_mean", score_col=score, remove_layers=remove_layers)
     return poses
 
-def combine_screening_results(dir: str, prefixes: list, scores: list, weights: list, residue_cols: list, model: str, input_motifs: Poses):
+def combine_screening_results(dir: str, prefixes: list, scores: list, weights: list, residue_cols: list, input_motifs: Poses):
     if len(prefixes) == 0:
         logging.error("No poses passed in any of the screening runs. Aborting!"); sys.exit(1)
     
@@ -342,11 +338,6 @@ def combine_screening_results(dir: str, prefixes: list, scores: list, weights: l
     # calculate screening composite score
     poses.calculate_composite_score(name='screening_composite_score', scoreterms=scores, weights=weights, plot=True)
 
-    # filter poses to 'baker success' (kind of):
-    poses.filter_poses_by_value(score_col="esm_plddt", value=75, operator=">=")
-    poses.filter_poses_by_value(score_col=f"esm_tm_TM_score_ref", value=0.8, operator=">=")
-    poses.filter_poses_by_value(score_col="esm_catres_bb_rmsd", value=1.5, operator="<=")
-
     poses.reindex_poses(prefix="reindexed_screening_poses", remove_layers=1, force_reindex=1)
 
     grouped_df = poses.df.groupby('screen', sort=True)
@@ -354,7 +345,7 @@ def combine_screening_results(dir: str, prefixes: list, scores: list, weights: l
     df_names, dfs = zip(*[(name, df) for name, df in grouped_df])
     plot_scores = scores + ['design_composite_score', 'screen_decentralize_weight', 'screen_decentralize_distance', 'screen', 'screening_composite_score']
     for score in plot_scores:
-        plots.violinplot_multiple_cols_dfs(dfs=dfs, df_names=df_names, cols=[score], y_labels=[score], out_path=os.path.join(out_dir, f'{score}_violin.png'))
+        plots.violinplot_multiple_cols_dfs(dfs=dfs, df_names=df_names, cols=[score], y_labels=[score], out_path=os.path.join(out_dir, f'{score}_violin.png'), show_fig=False)
 
     # save poses dataframe as well
     poses.df.sort_values("design_composite_score", ascending=True, inplace=True)
@@ -380,7 +371,7 @@ def combine_screening_results(dir: str, prefixes: list, scores: list, weights: l
     counts = poses.df["input_poses"].value_counts()
     poses.df["successful_screening_results"] = poses.df["input_poses"].map(counts)
     unique = poses.df.drop_duplicates(subset=["input_poses"], keep="first")
-    successfull_motifs = input_motifs.df.merge(unique['input_poses'], on="input_poses")
+    successfull_motifs = input_motifs.df.merge(unique[['input_poses', 'successful_screening_results']], on="input_poses")
     successfull_motifs.sort_values("successful_screening_results", ascending=False, inplace=True)
     successfull_motifs.reset_index(drop=True, inplace=True)
     successfull_motifs.to_json(os.path.join(out_dir, "successful_input_motifs.json"))
@@ -813,9 +804,9 @@ def main(args):
 
             # calculate RMSDs (backbone, motif, fixedres)
             logging.info(f"Prediction of {len(backbones.df.index)} sequences completed. Calculating RMSDs to rfdiffusion backbone and reference fragment.")
-            backbones = catres_motif_heavy_rmsd.run(poses = backbones, prefix = "esm_catres_heavy")
             backbones = catres_motif_bb_rmsd.run(poses = backbones, prefix = "esm_catres_bb")
             backbones = bb_rmsd.run(poses = backbones, ref_col="rfdiffusion_location", prefix = "esm_backbone")
+            backbones = catres_motif_heavy_rmsd.run(poses = backbones, prefix = "esm_catres_heavy")
 
             # calculate TM-Score and get sc-tm score:
             tm_score_calculator.run(
@@ -824,14 +815,10 @@ def main(args):
                 ref_col = "channel_removed_location",
             )
 
-            # run rosetta_script to evaluate residuewise energy
-            rosetta.run(
-                poses = backbones,
-                prefix = "fastrelax",
-                rosetta_application="rosetta_scripts.default.linuxgccrelease",
-                nstruct = 1,
-                options = fr_options
-            )
+            # filter poses:
+            backbones.filter_poses_by_value(score_col="esm_plddt", value=75, operator=">=")
+            backbones.filter_poses_by_value(score_col="esm_tm_TM_score_ref", value=0.8, operator=">=")
+            backbones.filter_poses_by_value(score_col="esm_catres_bb_rmsd", value=1.5, operator="<=")
 
             ############################################# BACKBONE FILTER ########################################################
 
@@ -848,6 +835,8 @@ def main(args):
             backbones = ligand_clash.run(poses=backbones, prefix="esm_ligand")
             backbones = ligand_contacts.run(poses=backbones, prefix="esm_lig")
 
+
+
             # calculate multi-scorerterm score for the final backbone filter:
             backbones.calculate_composite_score(
                 name="design_composite_score",
@@ -862,15 +851,15 @@ def main(args):
                 score_col="design_composite_score",
                 prefix=f"{prefix}_backbone_filter",
                 plot=True,
-                remove_layers=2 if args.screen_skip_mpnn_rlx_mpnn else 4
+                remove_layers=1 if args.screen_skip_mpnn_rlx_mpnn else 3
             )
 
             # plot outputs
             logging.info(f"Plotting outputs.")
-            cols = ["rfdiffusion_catres_rmsd", "esm_plddt", "esm_backbone_rmsd", "esm_catres_heavy_rmsd", "fastrelax_total_score", "esm_tm_sc_tm", "esm_rog_data", "esm_lig_contacts", "esm_ligand_clashes"]
-            titles = ["RFDiffusion Motif\nBackbone RMSD", "ESMFold pLDDT", "ESMFold BB-Ca RMSD", "ESMFold Sidechain\nRMSD", "Rosetta total_score", "SC-TM Score", "Radius of Gyration", "Ligand Contacts", "Ligand Clashes"]
-            y_labels = ["Angstrom", "pLDDT", "Angstrom", "Angstrom", "[REU]", "TM Score", "Angstrom", "#", "#"]
-            dims = [(0,8), (0,100), (0,8), (0,8), None, (0,1), None, None, None]
+            cols = ["rfdiffusion_catres_rmsd", "esm_plddt", "esm_backbone_rmsd", "esm_catres_heavy_rmsd", "esm_tm_sc_tm", "esm_rog_data", "esm_lig_contacts", "esm_ligand_clashes"]
+            titles = ["RFDiffusion Motif\nBackbone RMSD", "ESMFold pLDDT", "ESMFold BB-Ca RMSD", "ESMFold Sidechain\nRMSD", "SC-TM Score", "Radius of Gyration", "Ligand Contacts", "Ligand Clashes"]
+            y_labels = ["Angstrom", "pLDDT", "Angstrom", "Angstrom", "TM Score", "Angstrom", "#", "#"]
+            dims = [(0,8), (0,100), (0,8), (0,8), (0,1), None, None, None]
 
             # plot results
             plots.violinplot_multiple_cols(
@@ -886,7 +875,7 @@ def main(args):
             #logging.info(f"Fraction of RFdiffusion design-successful backbones that contain active-site pocket: {pocket_containing_fraction}")
             backbones.df.sort_values("design_composite_score", ascending=True, inplace=True)
             backbones.df.reset_index(drop=True, inplace=True)
-            backbones.reindex_poses(prefix="reindex", remove_layers=3 if args.screen_skip_mpnn_rlx_mpnn else 5, force_reindex=True)
+            backbones.reindex_poses(prefix="reindex", remove_layers=2 if args.screen_skip_mpnn_rlx_mpnn else 4, force_reindex=True)
 
             # copy filtered poses to new location
             backbones.save_poses(out_path=results_dir)
@@ -915,7 +904,7 @@ def main(args):
 
         scores = ["esm_plddt", "esm_tm_TM_score_ref", "esm_catres_bb_rmsd", "esm_catres_heavy_rmsd", "esm_rog_data", "esm_lig_contacts", "esm_ligand_clashes", "screen_passed_poses"]
         weights = [-1, -1, 4, 3, 1, -1, -1, 1]
-        backbones = combine_screening_results(dir=args.working_dir, prefixes=prefixes, scores=scores, weights=weights, residue_cols=residue_cols, model=args.model, input_motifs=starting_motifs)
+        backbones = combine_screening_results(dir=args.working_dir, prefixes=prefixes, scores=scores, weights=weights, residue_cols=residue_cols, input_motifs=starting_motifs)
         backbones.set_work_dir(args.working_dir)
         backbones.save_scores()
 
@@ -963,9 +952,9 @@ def main(args):
         )
 
         logging.info(f"Plotting refinement input data.")
-        cols = ["esm_plddt", "esm_backbone_rmsd", "esm_catres_bb_rmsd", "esm_catres_heavy_rmsd", "fastrelax_total_score", "esm_tm_sc_tm", "esm_rog_data", "esm_lig_contacts", "esm_ligand_clashes", "screen", "screen_decentralize_weight", "screen_decentralize_distance"]
-        titles = ["ESMFold pLDDT", "ESMFold BB-Ca RMSD", "ESMFold fixed res\nBB-Ca RMSD", "ESMFold Sidechain\nRMSD", "Rosetta total_score", "SC-TM Score", "Radius of Gyration", "Ligand Contacts", "Ligand Clashes", "screen number", "decentralize weight", "decentralize distance"]
-        y_labels = ["pLDDT", "Angstrom", "Angstrom", "Angstrom", "[REU]", "TM Score", "Angstrom", "#", "#", "#", "AU", "Angstrom"]
+        cols = ["esm_plddt", "esm_backbone_rmsd", "esm_catres_bb_rmsd", "esm_catres_heavy_rmsd", "esm_tm_sc_tm", "esm_rog_data", "esm_lig_contacts", "esm_ligand_clashes", "screen", "screen_decentralize_weight", "screen_decentralize_distance"]
+        titles = ["ESMFold pLDDT", "ESMFold BB-Ca RMSD", "ESMFold fixed res\nBB-Ca RMSD", "ESMFold Sidechain\nRMSD", "SC-TM Score", "Radius of Gyration", "Ligand Contacts", "Ligand Clashes", "screen number", "decentralize weight", "decentralize distance"]
+        y_labels = ["pLDDT", "Angstrom", "Angstrom", "Angstrom", "TM Score", "Angstrom", "#", "#", "#", "AU", "Angstrom"]
         dims = [None for _ in cols]
 
         plots.violinplot_multiple_cols(
@@ -1750,7 +1739,6 @@ if __name__ == "__main__":
     argparser.add_argument("--flanking", type=str, default="split", help="How flanking should be set. nterm or cterm also valid options.")
     argparser.add_argument("--flanker_length", type=int, default=30, help="Set Length of Flanking regions. For active_site model: 30 (recommended at least).")
     argparser.add_argument("--total_length", type=int, default=200, help="Total length of protein to diffuse. This includes flanker, linkers and input fragments.")
-    #argparser.add_argument("--linker_length", type=str, default="auto", help="linker length, total length. How long should the linkers be?")
 
     # ligandmpnn optionals
     argparser.add_argument("--ligandmpnn_options", type=str, default=None, help="Options for ligandmpnn runs.")

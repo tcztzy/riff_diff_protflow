@@ -4,11 +4,11 @@ ProtFlow Implementation of the RiffDiff pipeline to design enzymes from theozyme
 # INSTALLATION
 
 The ProtFlow python library is required to run Riff-Diff. You can download it here: https://github.com/mabr3112/ProtFlow together with installation instructions. Required protein design tools for Riff-Diff that need to be installed on your machine:
-  - RFdiffusion (https://github.com/RosettaCommons/RFdiffusion)
-  - ESMFold (https://github.com/facebookresearch/esm)
-  - Rosetta (https://github.com/RosettaCommons/rosetta)
+  - RFdiffusion (https://github.com/RosettaCommons/RFdiffusion, tested for v1.1.0 RFdiffusion Python Module)
+  - ESMFold (https://github.com/facebookresearch/esm, tested for ESM-2 Public Release v1.0.3)
+  - Rosetta (https://github.com/RosettaCommons/rosetta, tested for Rosetta 3.13)
   - LigandMPNN (https://github.com/dauparas/LigandMPNN)
-  - ColabFold (https://github.com/YoshitakaMo/localcolabfold)
+  - ColabFold (https://github.com/YoshitakaMo/localcolabfold, tested for v1.5.5)
   - AttnPacker (optional, https://github.com/MattMcPartlon/AttnPacker)
 
 Make sure all of these are properly configured with ProtFlow (added to the .config file!)
@@ -58,6 +58,7 @@ Other important flags include:
   - --rotamer_position: select position of the active site residue on the backbbone fragment (by default, all positions except for N- and C-terminus of the fragment are selected)
 
 Instead of providing a predefined backbone fragment, Riff-Diff can also search the PDB for the most appropriate fragments based on rotamer and backbone occurrences using the flag --pick_frags_from_db. You need to download the fragment library from (insert_link_here) first and place it in the Riff-Diff database folder. This will result in fragments with higher rotamer probabilities, however these fragments typically yield worse output in the subsequent diffusion steps compared to the default idealized helix fragment. It is still experimental and not recommended!
+
 After running the script, all selected fragments can be found in the output directory, together with some information about the selected rotamers and fragments in the respective subfolders.
 
 # MOTIF LIBRARY ASSEMBLY
@@ -84,15 +85,22 @@ Other important flags are:
   - --screen_input_selection: determines how structures are selected, it is generally recommended to use either "top" or "weighted".
   - --screen_num_rfdiffusions: number of backbones that will be generated with RFdiffusion for each selected motif.
 
-It is generally recommended to have a look at the screening output before continuing to the next stage using the flag --skip_refinement. This way the script will not continue automatically. You can find the output of the first stage in the directory XYZ.
+The combined output of all screening runs is found in working_dir/screening_results. You can have a closer look in pymol by running these commands:
+```
+cd /path/to/working_dir/screening_results
+pymol align_results.pml
+```
+You will also find some plots containing data on the individual screening runs and a file called successful_input_motifs.json. This file contains all input motifs that yielded successful motifs, you can use it as input for subsequent screening runs (e.g. using a different prefix with the flag --screen_prefix).
+
+It is generally recommended to have a look at the screening output before continuing to the next stage using the flag --skip_refinement. This way the script will not continue automatically.
 
 ## Stage 2: Refinement
 
-In this stage, the screening output is iteratively refined by cycling sequence optimization-backbone optimization-sequence-optimization-structure prediction steps (LigandMPNN-Rosetta Relax-LigandMPNN-ESMFold). If you did not provide the --skip_refinement flag in the previous stage, it will start automatically. Otherwise, you can provide the output of the previous step (XYZ.json) via the flag --ref_input_json.
+In this stage, the screening output is iteratively refined by cycling sequence optimization-backbone optimization-sequence-optimization-structure prediction steps (LigandMPNN-Rosetta Relax-LigandMPNN-ESMFold). If you did not provide the --skip_refinement flag in the previous stage, it will start automatically. Otherwise, you can provide the output of the previous step (/path/to/working_dir/screening_results_all.json) via the flag --ref_input_json.
   - --ref_cycles: number of iterations for sequence optimization-backbone optimization-sequence-optimization-structure prediction.
   - --ref_input_poses: recommended to look at the screening output to determine how many structures are actually worth refining and select the number of input poses based on that.
 The various filter steps can be adjusted via --ref_catres_bb_rmsd_cutoff_start/--ref_catres_bb_rmsd_cutoff_end, --ref_plddt_cutoff_start/--ref_plddt_cutoff_end. Filter values are ramped with each cycle, start and end values correspond to the first and last cycle.
-You can again pause the script using --skip_evaluation. Due to prediction with AF2, evaluation is quite time-consuming.
+You can again pause the script using --skip_evaluation. Due to prediction with AF2, evaluation is quite time-consuming. The refinement output is found in the XYZ and can again be viewed in pymol by running the script align_results.pml.
 
 ## Stage 3: Evaluation
 
@@ -102,3 +110,7 @@ The output is is XYZ.
 
 ## Stage 4: Diversification
 This is an optional stage. It is used to diversify sequences for successful backbones and to fine-tune active sites. You can manually provide a list of mutations you want to introduce for each input structure (for instance, to open channels that are blocked by a sidechain).
+
+
+# DISCLAIMER
+This repository contains code from https://github.com/RosettaCommons/RFdiffusion (potentials.py) and https://github.com/RosettaCommons/rosetta (molfile_to_params.py and dependencies)
