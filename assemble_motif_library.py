@@ -566,9 +566,13 @@ def main(args):
     if args.no_channel_placeholder:
         channel_path = None
         logging.info("Running without channel placeholder.")
-    elif args.channel_path:
-        if os.path.isfile(args.channel_path):
-            channel = load_structure_from_pdbfile(args.channel_path)[args.channel_chain]
+    else:
+        if args.channel_path:
+            channel_path = args.channel_path
+        else:
+            channel_path = os.path.join(channels_dir, "helix_cone_long.pdb")
+        if os.path.isfile(channel_path):
+            channel = load_structure_from_pdbfile(channel_path)[args.channel_chain]
             channel.detach_parent()
             channel.id = "Q"
             for index, residue in enumerate(channel.get_residues()):
@@ -579,8 +583,6 @@ def main(args):
         else:
             logging.error(f"Could not find a PDB file at {channel_path} to add as channel placeholder!")
             raise RuntimeError(f"Could not find a PDB file at {channel_path} to add as channel placeholder!")
-    else:
-        channel_path = os.path.join(channels_dir, "helix_cone_long.pdb")
 
     if args.jobstarter == "SbatchArray": jobstarter = SbatchArrayJobstarter(max_cores=args.cpus)
     elif args.jobstarter == "Local": jobstarter = LocalJobStarter(max_cores=args.cpus)
