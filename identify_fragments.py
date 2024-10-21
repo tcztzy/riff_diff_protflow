@@ -318,25 +318,27 @@ def add_frag_to_structure(frag, structure):
 def check_fragment(frag, frag_list, frag_df, df_list, ligand, channel, vdw_radii, rotamer_position, covalent_bond, rmsd_cutoff, backbone_ligand_clash_detection_vdw_multiplier, rotamer_ligand_clash_detection_vdw_multiplier, channel_fragment_clash_detection_vdw_multiplier, num_channel_clash, num_bb_clash, num_sc_clash, num_rmsd_fails):
     frag_df['frag_num'] = len(frag_list)
     clash_check = False
+    clash_atoms = []
     if channel:
-        clash_check = distance_detection(frag, channel, vdw_radii, True, False, channel_fragment_clash_detection_vdw_multiplier, rotamer_position, None)
+        clash_check, clashing_atoms = distance_detection(frag, channel, vdw_radii, True, False, channel_fragment_clash_detection_vdw_multiplier, rotamer_position, None)
         if clash_check == True:
             num_channel_clash += 1
     if ligand and clash_check == False:
         #check for backbone clashes
-        clash_check = distance_detection(frag, ligand, vdw_radii, True, True, backbone_ligand_clash_detection_vdw_multiplier, rotamer_position, covalent_bond)
+        clash_check, clashing_atoms = distance_detection(frag, ligand, vdw_radii, True, True, backbone_ligand_clash_detection_vdw_multiplier, rotamer_position, covalent_bond)
         if clash_check == True:
             num_bb_clash += 1
         if clash_check == False:
             #check for rotamer clashes
-            clash_check = distance_detection(frag[rotamer_position], ligand, vdw_radii, False, True, rotamer_ligand_clash_detection_vdw_multiplier, rotamer_position, covalent_bond, True)
+            clash_check, clashing_atoms = distance_detection(frag[rotamer_position], ligand, vdw_radii, False, True, rotamer_ligand_clash_detection_vdw_multiplier, rotamer_position, covalent_bond, True)
             if clash_check == True:
                 num_sc_clash += 1
+                clash_atoms.append(clashing_atoms)
     #add the first encountered fragment without rmsd checking
     if clash_check == False and len(frag_list) == 0:
         frag_list.append(frag)
         df_list.append(frag_df)
-        return frag_list, df_list, num_channel_clash, num_bb_clash, num_sc_clash, num_rmsd_fails
+        return frag_list, df_list, num_channel_clash, num_bb_clash, num_sc_clash, num_rmsd_fails, list(set(clash_atoms))
     #calculate rmsds for all already accepted fragments
     if clash_check == False and len(frag_list) > 0:
         rmsdlist = [calculate_rmsd_bb(picked_frag, frag) for picked_frag in frag_list]
@@ -347,7 +349,7 @@ def check_fragment(frag, frag_list, frag_df, df_list, ligand, channel, vdw_radii
         else:
             num_rmsd_fails += 1
 
-    return frag_list, df_list, num_channel_clash, num_bb_clash, num_sc_clash, num_rmsd_fails
+    return frag_list, df_list, num_channel_clash, num_bb_clash, num_sc_clash, num_rmsd_fails, list(set(clash_atoms))
 
 
 def distance_detection(entity1, entity2, vdw_radii:dict, bb_only:bool=True, ligand:bool=False, clash_detection_vdw_multiplier:float=1.0, resnum:int=None, covalent_bond:str=None, ignore_func_groups:bool=True):
@@ -385,8 +387,8 @@ def distance_detection(entity1, entity2, vdw_radii:dict, bb_only:bool=True, liga
         element2 = atom_combination[1].element
         clash_detection_limit = clash_detection_vdw_multiplier * (vdw_radii[str(element1).lower()] + vdw_radii[str(element2).lower()])
         if distance < clash_detection_limit:
-            return True
-    return False
+            return True, (atom_combination[0].name, atom_combination[1].name)
+    return False, None
 
 def atoms_of_functional_groups():
     return ["NH1", "NH2", "OD1", "OD2", "ND2", "NE", "SG", "OE1", "OE2", "NE2", "ND1", "NZ", "SD", "OG", "OG1", "NE1", "OH"]
@@ -1391,6 +1393,8 @@ def main(args):
             frag_dfs = []
             #calculate maximum number of fragments per position, add missing fragments from previous position to maximum
             max_frags = int(args.max_frags / len(frag_dict)) + residual_to_max
+
+            sc_clashes = []
             #loop over fragment dataframe, create fragments
             for frag_index, frag_df in frag_dict[pos].groupby('frag_num', sort=False):
                 if len(picked_frags) < max_frags:
@@ -1403,7 +1407,8 @@ def main(args):
                         except:
                             continue
                     delattr(frag, 'internal_coord')
-                    picked_frags, frag_dfs, num_channel_clash, num_bb_clash, num_sc_clash, rmsd_fails = check_fragment(frag, picked_frags, frag_df, frag_dfs, ligand, channel, vdw_radii(), pos, args.covalent_bond, args.rmsd_cutoff, args.backbone_ligand_clash_detection_vdw_multiplier, args.rotamer_ligand_clash_detection_vdw_multiplier, args.channel_fragment_clash_detection_vdw_multiplier, num_channel_clash, num_bb_clash, num_sc_clash, rmsd_fails)
+                    picked_frags, frag_dfs, num_channel_clash, num_bb_clash, num_sc_clash, rmsd_fails, sc_clashing_atoms = check_fragment(frag, picked_frags, frag_df, frag_dfs, ligand, channel, vdw_radii(), pos, args.covalent_bond, args.rmsd_cutoff, args.backbone_ligand_clash_detection_vdw_multiplier, args.rotamer_ligand_clash_detection_vdw_multiplier, args.channel_fragment_clash_detection_vdw_multiplier, num_channel_clash, num_bb_clash, num_sc_clash, rmsd_fails)
+                    sc_clashes = sc_clashes + sc_clashing_atoms
                     frag_df['flipped'] = False
                     frag_df['rotated degrees'] = 0
                     #flip rotamer and fragment if theozyme residue is tip symmetric or a histidine
@@ -1412,7 +1417,8 @@ def main(args):
                         flipped_frag_df = frag_df.copy()
                         flipped_frag_df['flipped'] = True
                         flipped_frag = align_to_sidechain(flipped_frag, frag[pos], theozyme_residue, True)
-                        picked_frags, frag_dfs, num_channel_clash, num_bb_clash, num_sc_clash, rmsd_fails = check_fragment(flipped_frag, picked_frags, flipped_frag_df, frag_dfs, ligand, channel, vdw_radii(), pos, args.covalent_bond, args.rmsd_cutoff, args.backbone_ligand_clash_detection_vdw_multiplier, args.rotamer_ligand_clash_detection_vdw_multiplier, args.channel_fragment_clash_detection_vdw_multiplier, num_channel_clash, num_bb_clash, num_sc_clash, rmsd_fails)
+                        picked_frags, frag_dfs, num_channel_clash, num_bb_clash, num_sc_clash, rmsd_fails, sc_clashing_atoms = check_fragment(flipped_frag, picked_frags, flipped_frag_df, frag_dfs, ligand, channel, vdw_radii(), pos, args.covalent_bond, args.rmsd_cutoff, args.backbone_ligand_clash_detection_vdw_multiplier, args.rotamer_ligand_clash_detection_vdw_multiplier, args.channel_fragment_clash_detection_vdw_multiplier, num_channel_clash, num_bb_clash, num_sc_clash, rmsd_fails)
+                        sc_clashes = sc_clashes + sc_clashing_atoms
                     if args.rotate_histidine and theozyme_residue.get_resname() == "HIS":
                         for deg in range(args.rotate_histidines_deg, 360, args.rotate_histidines_deg):
                             if len(picked_frags) >= max_frags:
@@ -1421,7 +1427,8 @@ def main(args):
                             rot_frag_df = frag_df.copy()
                             rot_frag_df['rotated degrees'] = deg
                             rot_frag = rotate_histidine_fragment(rot_frag, deg, theozyme_residue, args.his_central_atom, ligand)
-                            picked_frags, frag_dfs, num_channel_clash, num_bb_clash, num_sc_clash, rmsd_fails = check_fragment(rot_frag, picked_frags, rot_frag_df, frag_dfs, ligand, channel, vdw_radii(), pos, args.covalent_bond, args.rmsd_cutoff, args.backbone_ligand_clash_detection_vdw_multiplier, args.rotamer_ligand_clash_detection_vdw_multiplier, args.channel_fragment_clash_detection_vdw_multiplier, num_channel_clash, num_bb_clash, num_sc_clash, rmsd_fails)
+                            picked_frags, frag_dfs, num_channel_clash, num_bb_clash, num_sc_clash, rmsd_fails, sc_clashing_atoms = check_fragment(rot_frag, picked_frags, rot_frag_df, frag_dfs, ligand, channel, vdw_radii(), pos, args.covalent_bond, args.rmsd_cutoff, args.backbone_ligand_clash_detection_vdw_multiplier, args.rotamer_ligand_clash_detection_vdw_multiplier, args.channel_fragment_clash_detection_vdw_multiplier, num_channel_clash, num_bb_clash, num_sc_clash, rmsd_fails)
+                            sc_clashes = sc_clashes + sc_clashing_atoms
                     if args.rotate_phenylalanine and theozyme_residue.get_resname() == "PHE":
                         for deg in range(args.rotate_phenylalanines_deg, 360, args.rotate_phenylalanines_deg):
                             if len(picked_frags) >= max_frags:
@@ -1430,13 +1437,15 @@ def main(args):
                             rot_frag_df = frag_df.copy()
                             rot_frag_df['rotated degrees'] = deg
                             rot_frag = rotate_phenylalanine_fragment(rot_frag, deg, theozyme_residue)
-                            picked_frags, frag_dfs, num_channel_clash, num_bb_clash, num_sc_clash, rmsd_fails = check_fragment(rot_frag, picked_frags, rot_frag_df, frag_dfs, ligand, channel, vdw_radii(), pos, args.covalent_bond, args.rmsd_cutoff, args.backbone_ligand_clash_detection_vdw_multiplier, args.rotamer_ligand_clash_detection_vdw_multiplier, args.channel_fragment_clash_detection_vdw_multiplier, num_channel_clash, num_bb_clash, num_sc_clash, rmsd_fails)
+                            picked_frags, frag_dfs, num_channel_clash, num_bb_clash, num_sc_clash, rmsd_fails, sc_clashing_atoms = check_fragment(rot_frag, picked_frags, rot_frag_df, frag_dfs, ligand, channel, vdw_radii(), pos, args.covalent_bond, args.rmsd_cutoff, args.backbone_ligand_clash_detection_vdw_multiplier, args.rotamer_ligand_clash_detection_vdw_multiplier, args.channel_fragment_clash_detection_vdw_multiplier, num_channel_clash, num_bb_clash, num_sc_clash, rmsd_fails)
+                            sc_clashes = sc_clashes + sc_clashing_atoms
                 else:
                     break
             
             log_and_print(f"Discarded {num_channel_clash} fragments that show clashes between backbone and channel placeholder with VdW multiplier {args.channel_fragment_clash_detection_vdw_multiplier}")
             log_and_print(f"Discarded {num_bb_clash} fragments that show clashes between backbone and ligand with VdW multiplier {args.backbone_ligand_clash_detection_vdw_multiplier}")
             log_and_print(f"Discarded {num_sc_clash} fragments that show clashes between sidechain and ligand with VdW multiplier {args.rotamer_ligand_clash_detection_vdw_multiplier}")
+            log_and_print(f"Atoms involved in sidechain-ligand clashes: {list(set(sc_clashes))}")
             log_and_print(f"Discarded {rmsd_fails} fragments that did not pass RMSD cutoff of {args.rmsd_cutoff} to all other picked fragments")
 
 
@@ -1446,7 +1455,7 @@ def main(args):
                 
                 rot = df.iloc[pos-1].squeeze() #identify_rotamer_position_by_probability(df)
                 covalent_bonds = args.covalent_bond
-                if covalent_bonds and args.lent_func_groups and theozyme_residue.get_resname() != rot['AA']:
+                if covalent_bonds and args.add_equivalent_func_groups and theozyme_residue.get_resname() != rot['AA']:
                     covalent_bonds = ",".join([exchange_covalent(covalent_bond) for covalent_bond in covalent_bonds.split(",")])
                 if covalent_bonds and rot['flipped'] == True:
                     covalent_bonds = ",".join([flip_covalent(covalent_bond, rot["AA"]) for covalent_bond in covalent_bonds.split(",")])
