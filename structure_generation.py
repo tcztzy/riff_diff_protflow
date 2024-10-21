@@ -31,6 +31,7 @@ from protflow.metrics.rmsd import BackboneRMSD, MotifRMSD, MotifSeparateSuperpos
 import protflow.tools.rosetta
 from protflow.utils.biopython_tools import renumber_pdb_by_residue_mapping, load_structure_from_pdbfile, save_structure_to_pdbfile
 import protflow.utils.plotting as plots
+from protflow.tools.residue_selectors import DistanceSelector
 
 
 def write_pymol_alignment_script(df:pd.DataFrame, scoreterm: str, top_n:int, path_to_script: str, ascending=True, use_original_location=False,
@@ -777,7 +778,7 @@ def main(args):
                 )
 
                 # filter backbones down to starting backbones
-                backbones.filter_poses_by_rank(n=1, score_col=f"bbopt_total_score", remove_layers=2)
+                backbones.filter_poses_by_rank(n=3, score_col=f"bbopt_total_score", remove_layers=2)
 
                 # run ligandmpnn on relaxed poses
                 backbones = ligand_mpnn.run(
@@ -788,6 +789,9 @@ def main(args):
                     options = ligandmpnn_options,
                     fixed_res_col = "fixed_residues",
                 )
+
+                # filter backbones down to starting backbones
+                backbones.filter_poses_by_rank(n=args.screen_num_mpnn_sequences, score_col=f"ligand_mpnn_overall_confidence", ascending=False, remove_layers=3)
 
             # predict with ESMFold
             logging.info(f"LigandMPNN finished, now predicting {len(backbones)} sequences using ESMFold.")
@@ -1407,16 +1411,42 @@ def main(args):
         # filter backbones down to starting backbones
         backbones.filter_poses_by_rank(n=1, score_col="variants_bbopt_total_score", remove_layers=1)
 
+        # select shell around the ligand
+        ligand_shell_selector = DistanceSelector(center="ligand_motif", distance=10, operator="<=", noncenter_atoms="CA")
+        ligand_shell_selector.select(prefix="ligand_shell", poses=backbones)
+
+        # create copy of backbones
+        shell_backbones = copy.deepcopy(backbones)
+
         # optimize sequences
         backbones = ligand_mpnn.run(
             poses = backbones,
             prefix = f"variants_mpnn",
-            nseq = 60,
+            nseq = 30,
             model_type = "ligand_mpnn",
             options = ligandmpnn_options,
             pose_options = "variants_pose_opts" if args.variants_mutations_csv else None,
             fixed_res_col = "fixed_residues"
         )
+
+        # only diversify around ligand, keep rest fixed
+        if args.variants_mutations_csv:
+            shell_backbones.df["variants_pose_opts"] = [f"{mut_opts} --redesigned_residues {shell.to_string(delim=" ")}" for mut_opts, shell in zip(shell_backbones.df["variants_pose_opts"].to_list(), shell_backbones.df["ligand_shell"].to_list())]
+        else:
+            shell_backbones.df["variants_pose_opts"] = [f"--redesigned_residues {shell.to_string(delim=" ")}" for shell in shell_backbones.df["ligand_shell"].to_list()]
+
+        shell_backbones = ligand_mpnn.run(
+            poses = shell_backbones,
+            prefix = "shell_diversification",
+            nseq = 30,
+            model_type = "ligand_mpnn",
+            options = f"--ligand_mpnn_use_side_chain_context 1 --temperature 0.2 {args.ligandmpnn_options if args.ligandmpnn_options else ""}",
+            pose_options = "variants_pose_opts",
+            fixed_res_col = "fixed_residues"
+        )
+
+        backbones.df = pd.concat(backbones.df, shell_backbones.df)
+        backbones.reindex_poses(prefix="post_mpnn", remove_layers=1, force_reindex=True)
 
         # predict structures using ESMFold
         backbones = esmfold.run(
@@ -1506,7 +1536,7 @@ def main(args):
         # apply filters
         backbones.filter_poses_by_value(score_col=f"variants_postrelax_ligand_rmsd", value=args.ref_ligand_rmsd_end, operator="<=", prefix=f"variants_ligand_rmsd", plot=True)        
 
-        # define number of index layers that were added during refinement cycle (higher in subsequent cycles because reindexing adds a layer)
+        # define number of index layers that were added during variants generation
         layers = 3
         if args.attnpacker_repack: layers += 1
 
@@ -1690,11 +1720,12 @@ if __name__ == "__main__":
     argparser.add_argument("--screen_input_selection", default="top", help="Can be either 'top' (default), 'random' or 'weighted'. Defines if motif library input poses are chosen based on score, at random or random weighted by score.")
     argparser.add_argument("--screen_num_rfdiffusions", type=int, default=5, help="Number of backbones to generate per input path during screening.")
     argparser.add_argument("--screen_skip_mpnn_rlx_mpnn", action="store_true", help="Skip LigandMPNN-RELAX-LigandMPNN steps and just run LigandMPNN once before prediction with ESMFold. Faster, but lower success rates (only recommended for initial screening purposes).")
-    argparser.add_argument("--screen_num_mpnn_sequences", type=int, default=20, help="Number of LigandMPNN sequences per backbone that should be generated and predicted with ESMFold post-RFdiffusion.")
-    argparser.add_argument("--screen_num_seq_thread_sequences", type=int, default=3, help="Number of LigandMPNN sequences that should be generated during the sequence threading phase (input for backbone optimization). Only used if <screen_mpnn_rlx_mpnn> is True.")
+    argparser.add_argument("--screen_num_mpnn_sequences", type=int, default=30, help="Number of LigandMPNN sequences per backbone that should be generated and predicted with ESMFold post-RFdiffusion.")
+    argparser.add_argument("--screen_num_seq_thread_sequences", type=int, default=5, help="Number of LigandMPNN sequences that should be generated during the sequence threading phase (input for backbone optimization). Only used if <screen_mpnn_rlx_mpnn> is True.")
     argparser.add_argument("--screen_prefix", type=str, default=None, help="Prefix for screening runs for testing different settings. Will be reused for subsequent steps if not specified otherwise.")
 
     # refinement optionals
+    argparser.add_argument("--ref_input_json", type=str, default=None, help="Read in a poses json file containing input poses for refinement. Screening will be skipped.")
     argparser.add_argument("--ref_prefix", type=str, default=None, help="Prefix for refinement runs for testing different settings.")
     argparser.add_argument("--ref_cycles", type=int, default=5, help="Number of Rosetta-MPNN-ESM refinement cycles.")
     argparser.add_argument("--ref_input_poses_per_bb", default=None, help="Filter the number of refinement input poses on an input-backbone level. This filter is applied before the ref_input_poses filter.")
@@ -1708,7 +1739,6 @@ if __name__ == "__main__":
     argparser.add_argument("--ref_ligand_rmsd_start", type=float, default=2.8, help="Start value for esm plddt filter after each refinement cycle. Filter will be ramped from start to end during refinement.")
     argparser.add_argument("--ref_num_cycle_poses", type=int, default=3, help="Number of poses per unique diffusion backbone that should be passed on to the next refinement cycle.")
     argparser.add_argument("--ref_seq_thread_num_mpnn_seqs", type=float, default=3, help="Number of LigandMPNN output sequences during the initial, sequence-threading phase (pre-relax).")
-    argparser.add_argument("--ref_input_json", type=str, default=None, help="Read in a poses json file containing input poses for refinement. Screening will be skipped.")
     argparser.add_argument("--ref_start_cycle", type=int, default=1, help="Number from which to start cycles. Useful if adding additional refinement cycles after a run has completed.")
 
     # evaluation
