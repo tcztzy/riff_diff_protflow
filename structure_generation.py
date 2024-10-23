@@ -478,6 +478,49 @@ def write_rfdiffusion_inpaint_seq(motif_residues:ResidueSelection, fixed_residue
     inpaint_seq = inpaint_seq.to_string(delim="/")
     return f"'contigmap.inpaint_seq=[{inpaint_seq}]'"
 
+def add_covalent_bonds_info(poses:Poses, prefix:str, covalent_bonds_col:str) -> Poses:
+    if poses.df[covalent_bonds_col].isna().all():
+        return poses
+    covalent_bonds = poses.df[covalent_bonds_col].to_list()
+    os.makedirs(out_dir := os.path.join(poses.work_dir, prefix), exist_ok=True)
+    paths = []
+    for pose, cov_bonds in zip(poses.poses_list(), covalent_bonds):
+        links = "\n".join([parse_link_from_cov_bond(cov_bond) for cov_bond in cov_bonds.split(",")]) + "\n"
+        if not os.path.isfile(outfile := os.path.join(out_dir, os.path.basename(pose))):
+            prefix_string_to_file(pose, links, outfile)
+        paths.append(outfile)
+    poses.df["poses"] = paths
+    return poses
+
+def prefix_string_to_file(file_path: str, prefix: str, save_path:str=None):
+    '''Adds something to the beginning of a file.'''
+    with open(file_path, 'r') as f: file_str = f.read()
+    with open(save_path or file_path, 'w') as f: f.write(prefix + file_str)
+
+def parse_link_from_cov_bond(covalent_bond: str) -> str:
+    '''parses covalent bond into Rosetta formated link record for PDB headers.'''
+    res_data, lig_data = covalent_bond.split(':')
+    res_data, res_atom = res_data.split('-')
+    lig_data, lig_atom = lig_data.split('-')
+    res_data, res_id = res_data.split("_")
+    lig_data, lig_id = lig_data.split("_")
+    res_chain = res_data[-1]
+    res_num = res_data[:-1]
+    lig_chain = lig_data[-1]
+    lig_num = lig_data[:-1]
+    return f"LINK         {res_atom:<3} {res_id:<3} {res_chain:>1}{res_num:>4}                {lig_atom:<3}  {lig_id:>3} {lig_chain:>1}{lig_num:>4}                  0.00"
+
+def update_covalent_bonds_info(bonds:str, original_fixedres:ResidueSelection, updated_fixedres:ResidueSelection) -> str:
+    if not bonds:
+        return None
+    original = original_fixedres.to_list(ordering="rosetta")
+    new = updated_fixedres.to_list(ordering="rosetta")
+    resnum = bonds.split("_")[0]
+    idx = original.index(resnum)
+    new_resnum = new[idx]
+    covalent_bond = "_".join([new_resnum] + bonds.split("_")[1:])
+    return covalent_bond
+
 def main(args):
     '''executes everyting (duh)'''
     ################################################# SET UP #########################################################
@@ -575,8 +618,8 @@ def main(args):
 
     # set up general rosetta options
 
-    bb_opt_options = f"-parser:protocol {os.path.abspath(os.path.join(args.riff_diff_dir, 'utils', "fr_constrained.xml"))} -beta"
-    fr_options = f"-parser:protocol {os.path.abspath(os.path.join(protflow.config.AUXILIARY_RUNNER_SCRIPTS_DIR, 'fastrelax_sap.xml'))} -beta"
+    bb_opt_options = f"-parser:protocol {os.path.abspath(os.path.join(args.riff_diff_dir, 'utils', "fr_constrained.xml"))} -beta -ignore_zero_occupancy false"
+    fr_options = f"-parser:protocol {os.path.abspath(os.path.join(protflow.config.AUXILIARY_RUNNER_SCRIPTS_DIR, 'fastrelax_sap.xml'))} -beta -ignore_zero_occupancy false"
     if params:
         fr_options = fr_options + f" -extra_res_fa {' '.join(params)}"
         bb_opt_options = bb_opt_options + f" -extra_res_fa {' '.join(params)}"
@@ -689,8 +732,11 @@ def main(args):
                 keep_ligand_chain = "Z"
             )
 
-            if len(ligand_paths) > 1:
-                split_combined_ligand(updated_ref_frags_dir, ligand_paths)
+            # replace combined ligand with original ligands (do it for single ligands as well, to change the ligand name from LIG to original name (important for covalent bonds))
+            split_combined_ligand(updated_ref_frags_dir, ligand_paths)
+
+            # update covalent bonds info
+            backbones.df["covalent_bonds"] = backbones.df.apply(lambda row: update_covalent_bonds_info(row['covalent_bonds'], row["template_fixedres"], row["fixed_residues"]), axis=1)
 
             # calculate ROG after RFDiffusion, when channel chain is already removed:
             logging.info(f"Calculating rfdiffusion_rog and rfdiffusion_catres_rmsd")
@@ -765,6 +811,8 @@ def main(args):
                     fixed_res_col = "fixed_residues",
                     return_seq_threaded_pdbs_as_pose = True
             )
+                # add covalent bonds info to poses pre-relax
+                backbones = add_covalent_bonds_info(poses=backbones, prefix="bbopt_cov_info", covalent_bonds_col="covalent_bonds")
 
                 # optimize backbones 
                 backbones.df[f'screen_bbopt_opts'] = [write_bbopt_opts(row=row, cycle=1, total_cycles=5, reference_location_col="updated_reference_frags_location", cat_res_col="fixed_residues", motif_res_col="motif_residues", ligand_chain="Z") for _, row in backbones.df.iterrows()]
@@ -791,7 +839,7 @@ def main(args):
                 )
 
                 # filter backbones down to starting backbones
-                backbones.filter_poses_by_rank(n=args.screen_num_mpnn_sequences, score_col=f"ligand_mpnn_overall_confidence", ascending=False, remove_layers=3)
+                backbones.filter_poses_by_rank(n=args.screen_num_mpnn_sequences, score_col=f"mpnn_overall_confidence", ascending=False, remove_layers=3)
 
             # predict with ESMFold
             logging.info(f"LigandMPNN finished, now predicting {len(backbones)} sequences using ESMFold.")
@@ -1014,6 +1062,9 @@ def main(args):
             logging.info("Optimizing backbones with Rosetta...")
             backbones.df[f'cycle_{cycle}_bbopt_opts'] = [write_bbopt_opts(row=row, cycle=cycle, total_cycles=args.ref_cycles, reference_location_col="updated_reference_frags_location", cat_res_col="fixed_residues", motif_res_col="motif_residues", ligand_chain="Z") for _, row in backbones.df.iterrows()]
 
+            # add covalent bonds info to poses pre-relax
+            backbones = add_covalent_bonds_info(poses=backbones, prefix=f"cycle_{cycle}_bbopt_cov_info", covalent_bonds_col="covalent_bonds")
+
             backbones = rosetta.run(
                 poses = backbones,
                 prefix = f"cycle_{cycle}_bbopt",
@@ -1101,6 +1152,9 @@ def main(args):
                 target_motif = "fixed_residues",
                 copy_chain = "Z"
             )
+
+            # add covalent bonds info to poses pre-relax
+            backbones = add_covalent_bonds_info(poses=backbones, prefix=f"cycle_{cycle}_fastrelax_cov_info", covalent_bonds_col="covalent_bonds")
 
             # run rosetta_script to evaluate residuewise energy
             logging.info("Relaxing poses with ligand present...")
@@ -1281,6 +1335,9 @@ def main(args):
         backbones = ligand_clash.run(poses=backbones, prefix="final_AF2_ligand")
         backbones = ligand_contacts.run(poses=backbones, prefix="final_AF2_lig")
 
+        # add covalent bonds info to poses pre-relax
+        backbones = add_covalent_bonds_info(poses=backbones, prefix="final_fastrelax_cov_info", covalent_bonds_col="covalent_bonds")
+        
         # relax predictions with ligand present
         backbones = rosetta.run(
             poses = backbones,
@@ -1397,6 +1454,9 @@ def main(args):
         copy_chain = "Z"
         )
 
+        # add covalent bonds info to poses pre-relax
+        backbones = add_covalent_bonds_info(poses=backbones, prefix="variants_bbopt_cov_info", covalent_bonds_col="covalent_bonds")
+
         backbones.df[f'variants_bbopt_opts'] = [write_bbopt_opts(row=row, cycle=1, total_cycles=1, reference_location_col="updated_reference_frags_location", cat_res_col="fixed_residues", motif_res_col="motif_residues", ligand_chain="Z") for _, row in backbones.df.iterrows()]
 
         backbones = rosetta.run(
@@ -1502,6 +1562,9 @@ def main(args):
             target_motif = "fixed_residues",
             copy_chain = "Z"
         )
+
+        # add covalent bonds info to poses pre-relax
+        backbones = add_covalent_bonds_info(poses=backbones, prefix="variants_fastrelax_cov_info", covalent_bonds_col="covalent_bonds")
 
         # run rosetta_script to evaluate residuewise energy
         backbones = rosetta.run(
@@ -1617,6 +1680,9 @@ def main(args):
         # calculate ligand clashes and ligand contacts
         backbones = ligand_clash.run(poses=backbones, prefix="variants_AF2_ligand")
         backbones = ligand_contacts.run(poses=backbones, prefix="variants_AF2_lig")
+
+        # add covalent bonds info to poses pre-relax
+        backbones = add_covalent_bonds_info(poses=backbones, prefix="variants_AF2_fastrelax_cov_info", covalent_bonds_col="covalent_bonds")
 
         # relax predictions with ligand present
         backbones = rosetta.run(
