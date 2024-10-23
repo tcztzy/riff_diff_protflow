@@ -47,8 +47,8 @@ By default, the backbone fragment consists of a 7-residue idealized helical frag
   - --riff_diff_dir: required to find paths to database etc
   - --theozyme_pdb: path to the theozyme input
   - --theozyme_resnums: comma-separated list of all active site residues with chain information that should be present in the catalytic motif (e.g. 25A,38A,188B)
-  - --output_dir: directory where all output will be saved
-  - --output_prefix: to easily identify which fragments belong together, can be any string
+  - --working_dir: directory where all output will be saved
+  - --output_prefix: to run different settings in the same working directory, can be any string
   - --ligands: comma-separated list of all ligand residues with chain information that should be present in the catalytic motif (e.g. X188,Z1)
 If you want to modify some options just for certain residues, you can run these separately using the same output directory and prefix.
 Other important flags include:  
@@ -63,7 +63,7 @@ After running the script, all selected fragments can be found in the output dire
 
 # MOTIF LIBRARY ASSEMBLY
 
-In the next step, fragments from all active site residues will be combined to create an active site motif (assemble_motif_library.py). Motifs with clashes will be removed automatically. The input is specified using the flag --input_dir, it should point to the output directory of the previous step (the folder containing .pdb and .json files for each active site residue). All .json files in this directory will be read in automatically. You also need to specifiy a working directory (this can be the same as the previous output directory) using --working_dir.
+In the next step, fragments from all active site residues will be combined to create an active site motif (assemble_motif_library.py). Motifs with clashes will be removed automatically. The input is specified using the flag --input_dir, it should point to the output directory of the previous step (the folder containing .pdb and .json files for each active site residue). All .json files in this directory will be read in automatically. You also need to specifiy a working directory (this can be the same as the previous working directory) using --working_dir.
 Other important options are:
   - --channel_path: replaces the default channel with the channel from this pdb
   - --channel_chain: in which chain the channel in the pdb at channel_path is found
