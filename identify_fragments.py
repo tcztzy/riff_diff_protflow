@@ -1092,16 +1092,16 @@ def alter_chi(rotlib, chi_column, chi_sig_column, dev):
     return new_chis
 
 def exchange_covalent(covalent_bond):
-    atom = covalent_bond.split(":")[0]
+    atom = covalent_bond.split(":")[0].split("-")[1]
     exchange_dict = {"OE1": "OD1", "OE2": "OD2", "CD1": "CG1", "CD2": "CG2", "NE2": "ND2", "OD1": "OE1", "OD2": "OE2", "CG1": "CD1", "CG2": "CD2", "ND2": "NE2"}
     try:
-        atom = exchange_dict[atom]
+        new_atom = exchange_dict[atom]
     except:
-        atom = atom
-    return atom + ":" + covalent_bond.split(":")[1]
+        new_atom = atom
+    return ":".join([covalent_bond.split(":")[0].replace(atom, new_atom), covalent_bond.split(":")[1]])
 
 def flip_covalent(covalent_bond, residue):
-    atom = covalent_bond.split(":")[0]
+    atom = covalent_bond.split(":")[0].split("-")[1]
     exchange_dict = {
         "GLU": {"OE1": "OE2", "OE2": "OE1"},
         "ASP": {"OD1": "OD2", "OD2": "OD1"},
@@ -1110,10 +1110,10 @@ def flip_covalent(covalent_bond, residue):
         "ARG": {"NH1": "NH2", "NH2": "NH1"}     
         }
     try:
-        atom = exchange_dict[residue][atom]
+        new_atom = exchange_dict[residue][atom]
     except:
-        atom = atom
-    return atom + ":" + covalent_bond.split(":")[1]
+        new_atom = atom
+    return ":".join([covalent_bond.split(":")[0].replace(atom, new_atom), covalent_bond.split(":")[1]])
 
 def log_and_print(string: str): 
     logging.info(string)
@@ -1144,6 +1144,21 @@ def define_rotamer_positions(fragsize):
     else:
         rotamer_positions = [rotamer_positions + 1]
     return rotamer_positions
+
+def update_covalent_bonds(covalent_bonds:str, rotamer_id:str, rotamer_position:int, ligand_dict:dict):
+    if not covalent_bonds:
+        return None
+    updated_bonds = []
+    for cov_bond in covalent_bonds.split(","):
+        res_data, lig_data = cov_bond.split(":")
+        res_data, res_atom = res_data.split("-")
+        lig_data, lig_atom = lig_data.split("-")
+        lig_resnum, lig_chain = split_pdb_numbering(lig_data)
+        ligand = ligand_dict[lig_chain][int(lig_resnum)]
+        _, lig_resnum, _ = ligand.id
+        lig_id = ligand.get_resname()
+        updated_bonds.append(f"{rotamer_position}A_{rotamer_id}-{res_atom}:{lig_resnum}Z_{lig_id}-{lig_atom}")
+    return ",".join(updated_bonds)
 
 
 def main(args):
@@ -1205,6 +1220,7 @@ def main(args):
     if args.ligands:
         ligand = Chain.Chain('Z')
         ligand_ids = args.ligands.split(',')
+        lig_dict = {}
         for index, lig_id in enumerate(ligand_ids):
             resnum, chain = split_pdb_numbering(lig_id)
             if not chain in [chain.id for chain in theozyme.get_chains()] or not resnum in [res.id[1] for res in theozyme[0][chain].get_residues()]:
@@ -1217,8 +1233,12 @@ def main(args):
                         lig = theozyme[0][chain][res.id]
                 logging.info(f"Found ligand in chain {chain} with residue number {resnum}.")
                 lig.detach_parent()
+                # set occupancy to 1 (to prevent downstream issues)
+                for atom in lig.get_atoms():
+                    atom.occupancy = 1
                 lig.id = (lig.id[0], index+1, lig.id[2])
                 ligand.add(lig)
+                lig_dict[chain] = {resnum: lig}
 
     if args.channel_chain:
         if not args.channel_chain in [chain.id for chain in theozyme.get_chains()]:
@@ -1240,15 +1260,21 @@ def main(args):
     for resname in args.theozyme_resnums.split(","):
         resnum, chain = split_pdb_numbering(resname)
         theozyme_residue = theozyme[0][chain][resnum]
-
-        if args.covalent_bond:
+        cov_bonds = []
+        if args.covalent_bonds:
             if not args.ligands:
                 logging.warning("WARNING: Covalent bonds are only useful if ligand is present!")
-            for cov_bond in args.covalent_bond.split(','):
-                if not cov_bond.split(':')[0] in [atom.name for atom in theozyme_residue.get_atoms()]:
-                    raise KeyError(f"Could not find atom {cov_bond.split(':')[0]} from covalent bond {cov_bond} in residue {resname}!")
-                if not cov_bond.split(':')[1] in [atom.name for atom in ligand.get_atoms()]:
+            for cov_bond in args.covalent_bonds.split(','):
+                theozyme_cov, ligand_cov = cov_bond.split(":")
+                resnum, chain = split_pdb_numbering(ligand_cov.split("-")[0])
+                if not theozyme_cov.split('-')[1] in [atom.name for atom in theozyme_residue.get_atoms()]:
+                    raise KeyError(f"Could not find atom {theozyme_cov.split('-')[1]} from covalent bond {cov_bond} in residue {resname}!")
+                if not ligand_cov.split('-')[1] in [atom.name for atom in lig_dict[chain][resnum].get_atoms()]:
                     raise KeyError(f"Could not find atom {cov_bond.split(':')[1]} from covalent bond {cov_bond} in ligand {args.ligands}!")
+                cov_bonds.append(f"{theozyme_cov.split('-')[1]}:{ligand_cov.split('-')[1]}")
+            cov_bonds = ",".join(cov_bonds)
+        else:
+            cov_bonds = None
                 
         if args.add_equivalent_func_groups:
             residue_identities = identify_residues_with_equivalent_func_groups(theozyme_residue)
@@ -1407,7 +1433,7 @@ def main(args):
                         except:
                             continue
                     delattr(frag, 'internal_coord')
-                    picked_frags, frag_dfs, num_channel_clash, num_bb_clash, num_sc_clash, rmsd_fails, sc_clashing_atoms = check_fragment(frag, picked_frags, frag_df, frag_dfs, ligand, channel, vdw_radii(), pos, args.covalent_bond, args.rmsd_cutoff, args.backbone_ligand_clash_detection_vdw_multiplier, args.rotamer_ligand_clash_detection_vdw_multiplier, args.channel_fragment_clash_detection_vdw_multiplier, num_channel_clash, num_bb_clash, num_sc_clash, rmsd_fails)
+                    picked_frags, frag_dfs, num_channel_clash, num_bb_clash, num_sc_clash, rmsd_fails, sc_clashing_atoms = check_fragment(frag, picked_frags, frag_df, frag_dfs, ligand, channel, vdw_radii(), pos, cov_bonds, args.rmsd_cutoff, args.backbone_ligand_clash_detection_vdw_multiplier, args.rotamer_ligand_clash_detection_vdw_multiplier, args.channel_fragment_clash_detection_vdw_multiplier, num_channel_clash, num_bb_clash, num_sc_clash, rmsd_fails)
                     sc_clashes = sc_clashes + sc_clashing_atoms
                     frag_df['flipped'] = False
                     frag_df['rotated degrees'] = 0
@@ -1417,7 +1443,7 @@ def main(args):
                         flipped_frag_df = frag_df.copy()
                         flipped_frag_df['flipped'] = True
                         flipped_frag = align_to_sidechain(flipped_frag, frag[pos], theozyme_residue, True)
-                        picked_frags, frag_dfs, num_channel_clash, num_bb_clash, num_sc_clash, rmsd_fails, sc_clashing_atoms = check_fragment(flipped_frag, picked_frags, flipped_frag_df, frag_dfs, ligand, channel, vdw_radii(), pos, args.covalent_bond, args.rmsd_cutoff, args.backbone_ligand_clash_detection_vdw_multiplier, args.rotamer_ligand_clash_detection_vdw_multiplier, args.channel_fragment_clash_detection_vdw_multiplier, num_channel_clash, num_bb_clash, num_sc_clash, rmsd_fails)
+                        picked_frags, frag_dfs, num_channel_clash, num_bb_clash, num_sc_clash, rmsd_fails, sc_clashing_atoms = check_fragment(flipped_frag, picked_frags, flipped_frag_df, frag_dfs, ligand, channel, vdw_radii(), pos, cov_bonds, args.rmsd_cutoff, args.backbone_ligand_clash_detection_vdw_multiplier, args.rotamer_ligand_clash_detection_vdw_multiplier, args.channel_fragment_clash_detection_vdw_multiplier, num_channel_clash, num_bb_clash, num_sc_clash, rmsd_fails)
                         sc_clashes = sc_clashes + sc_clashing_atoms
                     if args.rotate_histidine and theozyme_residue.get_resname() == "HIS":
                         for deg in range(args.rotate_histidines_deg, 360, args.rotate_histidines_deg):
@@ -1427,7 +1453,7 @@ def main(args):
                             rot_frag_df = frag_df.copy()
                             rot_frag_df['rotated degrees'] = deg
                             rot_frag = rotate_histidine_fragment(rot_frag, deg, theozyme_residue, args.his_central_atom, ligand)
-                            picked_frags, frag_dfs, num_channel_clash, num_bb_clash, num_sc_clash, rmsd_fails, sc_clashing_atoms = check_fragment(rot_frag, picked_frags, rot_frag_df, frag_dfs, ligand, channel, vdw_radii(), pos, args.covalent_bond, args.rmsd_cutoff, args.backbone_ligand_clash_detection_vdw_multiplier, args.rotamer_ligand_clash_detection_vdw_multiplier, args.channel_fragment_clash_detection_vdw_multiplier, num_channel_clash, num_bb_clash, num_sc_clash, rmsd_fails)
+                            picked_frags, frag_dfs, num_channel_clash, num_bb_clash, num_sc_clash, rmsd_fails, sc_clashing_atoms = check_fragment(rot_frag, picked_frags, rot_frag_df, frag_dfs, ligand, channel, vdw_radii(), pos, cov_bonds, args.rmsd_cutoff, args.backbone_ligand_clash_detection_vdw_multiplier, args.rotamer_ligand_clash_detection_vdw_multiplier, args.channel_fragment_clash_detection_vdw_multiplier, num_channel_clash, num_bb_clash, num_sc_clash, rmsd_fails)
                             sc_clashes = sc_clashes + sc_clashing_atoms
                     if args.rotate_phenylalanine and theozyme_residue.get_resname() == "PHE":
                         for deg in range(args.rotate_phenylalanines_deg, 360, args.rotate_phenylalanines_deg):
@@ -1437,7 +1463,7 @@ def main(args):
                             rot_frag_df = frag_df.copy()
                             rot_frag_df['rotated degrees'] = deg
                             rot_frag = rotate_phenylalanine_fragment(rot_frag, deg, theozyme_residue)
-                            picked_frags, frag_dfs, num_channel_clash, num_bb_clash, num_sc_clash, rmsd_fails, sc_clashing_atoms = check_fragment(rot_frag, picked_frags, rot_frag_df, frag_dfs, ligand, channel, vdw_radii(), pos, args.covalent_bond, args.rmsd_cutoff, args.backbone_ligand_clash_detection_vdw_multiplier, args.rotamer_ligand_clash_detection_vdw_multiplier, args.channel_fragment_clash_detection_vdw_multiplier, num_channel_clash, num_bb_clash, num_sc_clash, rmsd_fails)
+                            picked_frags, frag_dfs, num_channel_clash, num_bb_clash, num_sc_clash, rmsd_fails, sc_clashing_atoms = check_fragment(rot_frag, picked_frags, rot_frag_df, frag_dfs, ligand, channel, vdw_radii(), pos, cov_bonds, args.rmsd_cutoff, args.backbone_ligand_clash_detection_vdw_multiplier, args.rotamer_ligand_clash_detection_vdw_multiplier, args.channel_fragment_clash_detection_vdw_multiplier, num_channel_clash, num_bb_clash, num_sc_clash, rmsd_fails)
                             sc_clashes = sc_clashes + sc_clashing_atoms
                 else:
                     break
@@ -1445,7 +1471,8 @@ def main(args):
             log_and_print(f"Discarded {num_channel_clash} fragments that show clashes between backbone and channel placeholder with VdW multiplier {args.channel_fragment_clash_detection_vdw_multiplier}")
             log_and_print(f"Discarded {num_bb_clash} fragments that show clashes between backbone and ligand with VdW multiplier {args.backbone_ligand_clash_detection_vdw_multiplier}")
             log_and_print(f"Discarded {num_sc_clash} fragments that show clashes between sidechain and ligand with VdW multiplier {args.rotamer_ligand_clash_detection_vdw_multiplier}")
-            log_and_print(f"Atoms involved in sidechain-ligand clashes: {list(set(sc_clashes))}")
+            if sc_clashes := list(set(sc_clashes)):
+                log_and_print(f"Atoms involved in sidechain-ligand clashes: {sc_clashes}")
             log_and_print(f"Discarded {rmsd_fails} fragments that did not pass RMSD cutoff of {args.rmsd_cutoff} to all other picked fragments")
 
 
@@ -1454,12 +1481,13 @@ def main(args):
             for frag, df in zip(picked_frags, frag_dfs):
                 
                 rot = df.iloc[pos-1].squeeze() #identify_rotamer_position_by_probability(df)
-                covalent_bonds = args.covalent_bond
+                covalent_bonds = args.covalent_bonds
                 if covalent_bonds and args.add_equivalent_func_groups and theozyme_residue.get_resname() != rot['AA']:
                     covalent_bonds = ",".join([exchange_covalent(covalent_bond) for covalent_bond in covalent_bonds.split(",")])
                 if covalent_bonds and rot['flipped'] == True:
                     covalent_bonds = ",".join([flip_covalent(covalent_bond, rot["AA"]) for covalent_bond in covalent_bonds.split(",")])
-                row = pd.Series({'model_num': frag_num, 'rotamer_pos': pos, 'AAs': df['AA'].to_list(), 'frag_length': len(df.index), 'backbone_score': df['backbone_score'].mean(), 'fragment_score': df['fragment_score'].mean(), 'rotamer_probability': rot['probability'], 'phi_psi_occurrence': rot['phi_psi_occurrence'], 'backbone_probability': df['backbone_probability'].mean(), 'covalent_bond': covalent_bonds, 'rotamer_score': df['rotamer_score'].mean()})
+                covalent_bonds = update_covalent_bonds(covalent_bonds, rot["AA"], pos, lig_dict)
+                row = pd.Series({'model_num': frag_num, 'rotamer_pos': pos, 'rotamer_id': rot['AA'], 'AAs': df['AA'].to_list(), 'frag_length': len(df.index), 'backbone_score': df['backbone_score'].mean(), 'fragment_score': df['fragment_score'].mean(), 'rotamer_probability': rot['probability'], 'phi_psi_occurrence': rot['phi_psi_occurrence'], 'backbone_probability': df['backbone_probability'].mean(), 'covalent_bonds': covalent_bonds, 'rotamer_score': df['rotamer_score'].mean()})
                 model = Model.Model(frag_num)
                 model.add(frag)
                 if ligand:
@@ -1527,7 +1555,7 @@ if __name__ == "__main__":
 
     # stuff you might want to adjust
     argparser.add_argument("--max_frags", type=int, default=100, help="Maximum number of frags that should be returned.")
-    argparser.add_argument("--covalent_bond", type=str, default=None, help="Add covalent bond(s) between rotamer and ligand in the form 'RotAtomA:LigAtomA,RotAtomB:LigAtomB'. Atom names should follow PDB numbering schemes, e.g. 'NZ:C3' for a covalent bond between a Lysine nitrogen and the third carbon atom of the ligand.")
+    argparser.add_argument("--covalent_bonds", type=str, default=None, help="Add covalent bond(s) between rotamer and ligand in the form 'RotAtomA:ligand_resnum1:LigAtomA,theozyme_resnum:RotAtomB:ligand_resnum2:LigAtomB'. Atom names should follow PDB numbering schemes, e.g. 'NZ:C3' for a covalent bond between a Lysine nitrogen and the third carbon atom of the ligand.")
     argparser.add_argument("--rotamer_ligand_clash_detection_vdw_multiplier", type=float, default=0.75, help="Multiplier for VanderWaals radii for clash detection between rotamer and ligand. Clash is detected if a distance between atoms < (VdW_radius_atom1 + VdW_radius_atom2)*multiplier.")
     argparser.add_argument("--backbone_ligand_clash_detection_vdw_multiplier", type=float, default=1.0, help="Multiplier for VanderWaals radii for clash detection between fragment backbone and ligand. Clash is detected if a distance between atoms < (VdW_radius_atom1 + VdW_radius_atom2)*multiplier.")
     argparser.add_argument("--channel_fragment_clash_detection_vdw_multiplier", type=float, default=1.0, help="Multiplier for VanderWaals radii for clash detection between fragment backbone and channel placeholder. Clash is detected if a distance between atoms < (VdW_radius_atom1 + VdW_radius_atom2)*multiplier.")
