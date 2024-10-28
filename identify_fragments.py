@@ -586,7 +586,7 @@ def trim_indices(arr, upper_limit, lower_limit, n):
     return arr
 
 
-def extract_fragments(rotamer_positions_df: pd.DataFrame, fraglib: pd.DataFrame, frag_pos_to_replace: list, fragsize: int):
+def extract_fragments(rotamer_positions_df: pd.DataFrame, fraglib: pd.DataFrame, frag_pos_to_replace: list, fragsize: int, working_dir: str):
     '''
     frag_pos_to_replace: the position in the fragment the future rotamer should be inserted. central position recommended.
     residue_identity: only accept fragments with the correct residue identity at that position (recommended)
@@ -597,7 +597,15 @@ def extract_fragments(rotamer_positions_df: pd.DataFrame, fraglib: pd.DataFrame,
     fragnum = 0
     frag_dict = {}
     rotamer_positions_df["temp_index_for_merge"] = rotamer_positions_df.index
+    os.makedirs(working_dir, exist_ok=True)
     for pos in frag_pos_to_replace:
+        # read in previous results if they exist
+        if os.path.isfile(outfile := os.path.join(working_dir, f"fragments_{pos}.json")):
+            log_and_print(f"Found previous results at {outfile}.")
+            frags_df = pd.read_json(outfile)
+            frag_dict[pos] = frags_df
+            continue
+
         rotamer_positions_df["temp_pos_for_merge"] = pos
         
         # define start and end index for each position
@@ -671,6 +679,9 @@ def extract_fragments(rotamer_positions_df: pd.DataFrame, fraglib: pd.DataFrame,
 
         # drop identifier column
         frags_df.drop(['temp_index_for_merge', 'temp_pos_for_merge'], axis=1, inplace=True)
+        
+        # write frags_df to json
+        frags_df.to_json(outfile)
 
         frag_dict[pos] = frags_df
 
@@ -1368,7 +1379,7 @@ def main(args):
             rotamer_positions = identify_positions_for_rotamer_insertion(fraglib_path, rotlib, args.rot_sec_struct, args.phi_psi_bin, os.path.join(working_dir, "rotamer_positions"), os.path.join(utils_dir, "identify_positions_for_rotamer_insertion.py"), resname, args.chi_std_multiplier, jobstarter=jobstarter)
             log_and_print(f"Found {len(rotamer_positions.index)} fitting positions.")
             log_and_print(f"Extracting fragments from rotamer positions...")
-            frag_dict = extract_fragments(rotamer_positions, fraglib, frag_pos_to_replace, args.fragsize)
+            frag_dict = extract_fragments(rotamer_positions, fraglib, frag_pos_to_replace, args.fragsize, os.path.join(working_dir, f"{resname}_database_fragments"))
             frag_num = int(sum([len(frag_dict[pos].index) for pos in frag_dict]) / args.fragsize)
             log_and_print(f'Found {frag_num} fragments.')
 
@@ -1381,7 +1392,12 @@ def main(args):
                     log_and_print(f"Could not find fragments for position {pos}.")
                     continue
                 if sec_dict:
-                    frag_dict[pos] = filter_frags_df_by_secondary_structure_content(frag_dict[pos], sec_dict)
+                    if os.path.isfile(filtered_frags := os.path.join(working_dir, f"{resname}_database_fragments", "sec_struct_filtered_frags.json")):
+                        log_and_print(f"Found previous filter results at {filtered_frags}.")
+                        frag_dict[pos] = pd.read_json(filtered_frags)
+                    else:
+                        frag_dict[pos] = filter_frags_df_by_secondary_structure_content(frag_dict[pos], sec_dict)
+                        frag_dict[pos].to_json(filtered_frags)
                     log_and_print(f"{int(len(frag_dict[pos]) / args.fragsize)} fragments passed secondary structure filtering with filter {args.frag_sec_struct_fraction} for position {pos}.")
                 if frag_dict[pos].empty:
                     frag_dict.pop(pos)
@@ -1393,7 +1409,12 @@ def main(args):
 
             combined = pd.concat([frag_dict[pos] for pos in frag_dict])
             log_and_print(f"Averaging and sorting fragments by fragment score with weights (backbone: {args.backbone_score_weight}, rotamer: {args.rotamer_score_weight}).")
-            combined = sort_frags_df_by_score(combined, args.backbone_score_weight, args.rotamer_score_weight, args.fragsize)
+            if os.path.isfile(averaged_frags := os.path.join(working_dir, f"{resname}_database_fragments", "averaged_sorted_frags.json")):
+                log_and_print(f"Found previous averaging results at {averaged_frags}.")
+                combined = pd.read_json(averaged_frags)
+            else:
+                combined = sort_frags_df_by_score(combined, args.backbone_score_weight, args.rotamer_score_weight, args.fragsize)
+                combined.to_json(averaged_frags)
 
             for pos, df in combined.groupby('rotamer_pos', sort=True):
                 frag_dict[pos] = df
