@@ -327,11 +327,11 @@ def combine_screening_results(dir: str, prefixes: list, scores: list, weights: l
 
     # recalculate composite score over all screening runs
     poses.calculate_composite_score(
-                name="design_composite_score",
-                scoreterms=["esm_plddt", "esm_tm_TM_score_ref", "esm_catres_bb_rmsd", "esm_catres_heavy_rmsd", "esm_lig_contacts", "esm_ligand_clashes", "esm_rog_data"],
-                weights=[-1, -1, 4, 3, -0.5, 0.5, 1],
-                plot=True
-            )
+        name="design_composite_score",
+        scoreterms=["esm_plddt", "esm_tm_TM_score_ref", "esm_catres_bb_rmsd", "esm_catres_heavy_rmsd", "esm_lig_contacts", "esm_ligand_clashes", "esm_rog_data"],
+        weights=[-1, -1, 4, 3, -0.5, 0.5, 1],
+        plot=True
+    )
 
     # convert columns to residues (else, pymol script writer and refinement crash)
     for residue_col in residue_cols:
