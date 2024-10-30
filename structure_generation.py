@@ -327,11 +327,11 @@ def combine_screening_results(dir: str, prefixes: list, scores: list, weights: l
 
     # recalculate composite score over all screening runs
     poses.calculate_composite_score(
-                name="design_composite_score",
-                scoreterms=["esm_plddt", "esm_tm_TM_score_ref", "esm_catres_bb_rmsd", "esm_catres_heavy_rmsd", "esm_lig_contacts", "esm_ligand_clashes", "esm_rog_data"],
-                weights=[-1, -1, 4, 3, -0.5, 0.5, 1],
-                plot=True
-            )
+        name="design_composite_score",
+        scoreterms=["esm_plddt", "esm_tm_TM_score_ref", "esm_catres_bb_rmsd", "esm_catres_heavy_rmsd", "esm_lig_contacts", "esm_ligand_clashes", "esm_rog_data"],
+        weights=[-1, -1, 4, 3, -0.5, 0.5, 1],
+        plot=True
+    )
 
     # convert columns to residues (else, pymol script writer and refinement crash)
     for residue_col in residue_cols:
@@ -880,11 +880,11 @@ def main(args):
             )
 
             # filter poses:
-            backbones.filter_poses_by_value(score_col="esm_plddt", value=75, operator=">=")
-            backbones.filter_poses_by_value(score_col="esm_tm_TM_score_ref", value=0.8, operator=">=")
-            backbones.filter_poses_by_value(score_col="esm_catres_bb_rmsd", value=1.5, operator="<=")
-            backbones.filter_poses_by_value(score_col="esm_motif_rmsd", value=1.5, operator="<=")
-            backbones.filter_poses_by_value(score_col="esm_rog_data", value=args.rfdiffusion_max_rog, operator="<=")
+            backbones.filter_poses_by_value(score_col="esm_plddt", value=75, operator=">=", prefix="screen_esm_plddt", plot=True)
+            backbones.filter_poses_by_value(score_col="esm_tm_TM_score_ref", value=0.8, operator=">=", prefix="screen_esm_TMscore", plot=True)
+            backbones.filter_poses_by_value(score_col="esm_catres_bb_rmsd", value=1.5, operator="<=", prefix="screen_esm_catres_bb_rmsd", plot=True)
+            backbones.filter_poses_by_value(score_col="esm_motif_rmsd", value=1.5, operator="<=", prefix="esm_motif_rmsd", plot=True)
+            backbones.filter_poses_by_value(score_col="esm_rog_data", value=args.rfdiffusion_max_rog, operator="<=", prefix="esm_rog", plot=True)
 
             # add back ligand and determine pocket-ness!
             logging.info(f"Adding Ligand back into the structure for ligand-based pocket prediction.")
