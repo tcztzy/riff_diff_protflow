@@ -311,7 +311,7 @@ def run_clash_detection(combinations, num_combs, directory, bb_multiplier, sc_mu
 
     in_df = pd.concat(in_df).reset_index(drop=True)
 
-    cmds = [f"{os.path.join(PROTFLOW_ENV, "python")} {script_path} --pkl {json} --working_dir {directory} --bb_multiplier {bb_multiplier} --sc_multiplier {sc_multiplier} --output_prefix {str(index)} --database_dir {database}" for index, json in enumerate(ensemble_names)]
+    cmds = [f"{os.path.join(PROTFLOW_ENV, 'python')} {script_path} --pkl {json} --working_dir {directory} --bb_multiplier {bb_multiplier} --sc_multiplier {sc_multiplier} --output_prefix {str(index)} --database_dir {database}" for index, json in enumerate(ensemble_names)]
 
     log_and_print(f'Distributing clash detection to cluster...')
 
@@ -845,7 +845,7 @@ def main(args):
             # store ligand as .mol file for rosetta .molfile-to-params.py
             log_and_print(f"Running 'molfile_to_params.py' to generate params file for Rosetta.")
             lig_molfile = openbabel_fileconverter(input_file=lig_path, output_file=lig_path.replace(".pdb", ".mol2"), input_format="pdb", output_format=".mol2")
-            cmd = f"{os.path.join(PROTFLOW_ENV, "python")} {os.path.join(utils_dir, 'molfile_to_params.py')} -n {lig_name} -p {ligand_dir}/LG{index+1} {lig_molfile} --keep-names --clobber --chain=Z"
+            cmd = f"{os.path.join(PROTFLOW_ENV, 'python')} {os.path.join(utils_dir, 'molfile_to_params.py')} -n {lig_name} -p {ligand_dir}/LG{index+1} {lig_molfile} --keep-names --clobber --chain=Z"
             LocalJobStarter().start(cmds=[cmd], jobname="moltoparams", output_path=ligand_dir)
             params_paths.append(lig_path.replace(".pdb", ".params"))
         else:

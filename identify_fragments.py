@@ -510,7 +510,7 @@ def identify_positions_for_rotamer_insertion(fraglib_path, rotlib, rot_sec_struc
 
     #sbatch_options = ["-c1", f'-e {directory}/{prefix}_identify_rotamer_positions.err -o {directory}/{prefix}_identify_rotamer_positions.out']
 
-    cmds = [f"{os.path.join(PROTFLOW_ENV, "python")} {script_path} --input_json {in_file} --fraglib {fraglib_path} --output_pickle {out_file} --phi_psi_bin {phi_psi_bin} --chi_std_multiplier {chi_std_multiplier}" for in_file, out_file in zip(in_filenames, out_filenames)]
+    cmds = [f"{os.path.join(PROTFLOW_ENV, 'python')} {script_path} --input_json {in_file} --fraglib {fraglib_path} --output_pickle {out_file} --phi_psi_bin {phi_psi_bin} --chi_std_multiplier {chi_std_multiplier}" for in_file, out_file in zip(in_filenames, out_filenames)]
     if rot_sec_struct:
         cmds = [cmd + f" --rot_sec_struct {rot_sec_struct}" for cmd in cmds]
     
