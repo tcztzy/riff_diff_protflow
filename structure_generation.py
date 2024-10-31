@@ -819,7 +819,7 @@ def main(args):
                     weights=[-1, 1, 1, -1,],
                     plot=True
                 )
-                
+
                 backbones.filter_poses_by_rank(n=args.screen_esm_input_poses, score_col="pre_esm_comp_score", ascending=False, prefix="esm_input_filter", plot=True)
 
 
@@ -1829,7 +1829,7 @@ if __name__ == "__main__":
     argparser.add_argument("--screen_num_mpnn_sequences", type=int, default=30, help="Number of LigandMPNN sequences per backbone that should be generated and predicted with ESMFold post-RFdiffusion.")
     argparser.add_argument("--screen_num_seq_thread_sequences", type=int, default=3, help="Number of LigandMPNN sequences that should be generated during the sequence threading phase (input for backbone optimization). Only used if <screen_mpnn_rlx_mpnn> is True.")
     argparser.add_argument("--screen_prefix", type=str, default=None, help="Prefix for screening runs for testing different settings. Will be reused for subsequent steps if not specified otherwise.")
-    argparser.add_argument("--screen_esm_input_poses", type=int, default=2000, help="Total number of poses that should be predicted with ESMFold.")
+    argparser.add_argument("--screen_esm_input_poses", type=int, default=5000, help="Maximum total number of poses that should be predicted with ESMFold.")
 
     # refinement optionals
     argparser.add_argument("--ref_input_json", type=str, default=None, help="Read in a poses json file containing input poses for refinement. Screening will be skipped.")
