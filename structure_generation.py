@@ -615,11 +615,11 @@ def main(args):
 
 
     # set up general ligandmpnn options
-    ligandmpnn_options = f"--ligand_mpnn_use_side_chain_context 1 {args.ligandmpnn_options if args.ligandmpnn_options else ""}"
+    ligandmpnn_options = f"--ligand_mpnn_use_side_chain_context 1 {args.ligandmpnn_options if args.ligandmpnn_options else ''}"
 
     # set up general rosetta options
 
-    bb_opt_options = f"-parser:protocol {os.path.abspath(os.path.join(args.riff_diff_dir, 'utils', "fr_constrained.xml"))} -beta -ignore_zero_occupancy false"
+    bb_opt_options = f"-parser:protocol {os.path.abspath(os.path.join(args.riff_diff_dir, 'utils', 'fr_constrained.xml'))} -beta -ignore_zero_occupancy false"
     fr_options = f"-parser:protocol {os.path.abspath(os.path.join(protflow.config.AUXILIARY_RUNNER_SCRIPTS_DIR, 'fastrelax_sap.xml'))} -beta -ignore_zero_occupancy false"
     if params:
         fr_options = fr_options + f" -extra_res_fa {' '.join(params)}"
@@ -820,7 +820,7 @@ def main(args):
                     plot=True
                 )
 
-                backbones.filter_poses_by_rank(n=args.screen_esm_input_poses, score_col="pre_esm_comp_score", prefix="esm_input_filter", plot=True)
+                backbones.filter_poses_by_rank(n=args.screen_esm_input_poses, score_col="pre_esm_comp_score", prefix="esm_input_filter", plot=True, plot_cols=["rfdiffusion_lig_contacts", "rfdiffusion_ligand_clashes", "rfdiffusion_rog_data", "postdiffusion_ligandmpnn_overall_confidence"])
 
 
             else:
@@ -876,7 +876,7 @@ def main(args):
                 )
 
                 # filter esm input poses
-                backbones.filter_poses_by_rank(n=args.screen_esm_input_poses, score_col="pre_esm_comp_score", prefix="esm_input_filter", plot=True)
+                backbones.filter_poses_by_rank(n=args.screen_esm_input_poses, score_col="pre_esm_comp_score", prefix="esm_input_filter", plot=True, plot_cols=["bbopt_total_score", "bbopt_lig_contacts", "bbopt_ligand_clashes", "rfdiffusion_rog_data", "mpnn_overall_confidence"])
 
             # predict with ESMFold
             logging.info(f"LigandMPNN finished, now predicting {len(backbones)} sequences using ESMFold.")
@@ -939,6 +939,7 @@ def main(args):
                 score_col="design_composite_score",
                 prefix=f"{prefix}_backbone_filter",
                 plot=True,
+                plot_cols=["esm_plddt", "esm_tm_TM_score_ref", "esm_catres_bb_rmsd", "esm_catres_heavy_rmsd", "esm_lig_contacts", "esm_ligand_clashes", "esm_rog_data"],
                 remove_layers=1 if args.screen_skip_mpnn_rlx_mpnn else 3
             )
 
@@ -1013,10 +1014,10 @@ def main(args):
 
         if args.ref_input_poses_per_bb:
             logging.info(f"Filtering refinement input poses on per backbone level according to design_composite_score...")
-            backbones.filter_poses_by_rank(n=args.ref_input_poses_per_bb, score_col=f'design_composite_score', remove_layers=1, prefix='refinement_input_bb', plot=True)
+            backbones.filter_poses_by_rank(n=args.ref_input_poses_per_bb, score_col=f'design_composite_score', remove_layers=1, prefix='refinement_input_bb', plot=True, plot_cols=["esm_plddt", "esm_tm_TM_score_ref", "esm_catres_bb_rmsd", "esm_catres_heavy_rmsd", "esm_lig_contacts", "esm_ligand_clashes", "esm_rog_data"])
         if args.ref_input_poses:
             logging.info(f"Filtering refinement input according to design_composite_score...")
-            backbones.filter_poses_by_rank(n=args.ref_input_poses, score_col=f'design_composite_score', prefix='refinement_input', plot=True)
+            backbones.filter_poses_by_rank(n=args.ref_input_poses, score_col=f'design_composite_score', prefix='refinement_input', plot=True, plot_cols=["esm_plddt", "esm_tm_TM_score_ref", "esm_catres_bb_rmsd", "esm_catres_heavy_rmsd", "esm_lig_contacts", "esm_ligand_clashes", "esm_rog_data"])
 
         # use reduced motif if specified
         if args.use_reduced_motif:
@@ -1251,6 +1252,7 @@ def main(args):
                 score_col=f"cycle_{cycle}_refinement_composite_score",
                 prefix=f"cycle_{cycle}_refinement_composite_score",
                 plot=True,
+                plot_cols=[f"cycle_{cycle}_esm_plddt", f"cycle_{cycle}_esm_tm_TM_score_ref", f"cycle_{cycle}_esm_catres_bb_rmsd", f"cycle_{cycle}_esm_catres_heavy_rmsd", f"cycle_{cycle}_delta_apo_holo", f"cycle_{cycle}_postrelax_ligand_rmsd", f"cycle_{cycle}_postrelax_catres_heavy_rmsd", f"cycle_{cycle}_fastrelax_sap_score_mean", f"cycle_{cycle}_postrelax_apo_catres_heavy_rmsd"],
                 remove_layers=1
             )
 
@@ -1291,10 +1293,10 @@ def main(args):
 
         if args.eval_input_poses_per_bb:
             logging.info(f"Filtering evaluation input poses on per backbone level according to cycle_{last_ref_cycle}_refinement_composite_score...")
-            backbones.filter_poses_by_rank(n=args.eval_input_poses_per_bb, score_col=f"cycle_{last_ref_cycle}_refinement_composite_score", remove_layers=1, prefix="evaluation_input_per_bb", plot=True)
+            backbones.filter_poses_by_rank(n=args.eval_input_poses_per_bb, score_col=f"cycle_{last_ref_cycle}_refinement_composite_score", remove_layers=1, prefix="evaluation_input_per_bb", plot=True, plot_cols=[f"cycle_{last_ref_cycle}_esm_plddt", f"cycle_{last_ref_cycle}_esm_tm_TM_score_ref", f"cycle_{last_ref_cycle}_esm_catres_bb_rmsd", f"cycle_{last_ref_cycle}_esm_catres_heavy_rmsd", f"cycle_{last_ref_cycle}_delta_apo_holo", f"cycle_{last_ref_cycle}_postrelax_ligand_rmsd", f"cycle_{last_ref_cycle}_postrelax_catres_heavy_rmsd", f"cycle_{last_ref_cycle}_fastrelax_sap_score_mean", f"cycle_{last_ref_cycle}_postrelax_apo_catres_heavy_rmsd"])
         if args.eval_input_poses: 
             logging.info(f"Filtering evaluation input poses according to cycle_{last_ref_cycle}_refinement_composite_score...")
-            backbones.filter_poses_by_rank(n=args.eval_input_poses, score_col=f"cycle_{last_ref_cycle}_refinement_composite_score", prefix="evaluation_input", plot=True)
+            backbones.filter_poses_by_rank(n=args.eval_input_poses, score_col=f"cycle_{last_ref_cycle}_refinement_composite_score", prefix="evaluation_input", plot=True, plot_cols=[f"cycle_{last_ref_cycle}_esm_plddt", f"cycle_{last_ref_cycle}_esm_tm_TM_score_ref", f"cycle_{last_ref_cycle}_esm_catres_bb_rmsd", f"cycle_{last_ref_cycle}_esm_catres_heavy_rmsd", f"cycle_{last_ref_cycle}_delta_apo_holo", f"cycle_{last_ref_cycle}_postrelax_ligand_rmsd", f"cycle_{last_ref_cycle}_postrelax_catres_heavy_rmsd", f"cycle_{last_ref_cycle}_fastrelax_sap_score_mean", f"cycle_{last_ref_cycle}_postrelax_apo_catres_heavy_rmsd"])
 
         evaluation_input_poses_dir = os.path.join(backbones.work_dir, "evaluation_input_poses")
         os.makedirs(evaluation_input_poses_dir, exist_ok=True)
@@ -1529,9 +1531,9 @@ def main(args):
 
         # only diversify around ligand, keep rest fixed
         if args.variants_mutations_csv:
-            shell_backbones.df["variants_pose_opts"] = [f"{mut_opts} --redesigned_residues {shell.to_string(delim=" ")}" for mut_opts, shell in zip(shell_backbones.df["variants_pose_opts"].to_list(), shell_backbones.df["ligand_shell"].to_list())]
+            shell_backbones.df["variants_pose_opts"] = [f"{mut_opts} --redesigned_residues {shell.to_string(delim=' ')}" for mut_opts, shell in zip(shell_backbones.df["variants_pose_opts"].to_list(), shell_backbones.df["ligand_shell"].to_list())]
         else:
-            shell_backbones.df["variants_pose_opts"] = [f"--redesigned_residues {shell.to_string(delim=" ")}" for shell in shell_backbones.df["ligand_shell"].to_list()]
+            shell_backbones.df["variants_pose_opts"] = [f"--redesigned_residues {shell.to_string(delim=' ')}" for shell in shell_backbones.df["ligand_shell"].to_list()]
 
         shell_backbones = ligand_mpnn.run(
             poses = shell_backbones,
