@@ -615,7 +615,7 @@ def main(args):
 
 
     # set up general ligandmpnn options
-    ligandmpnn_options = f"--ligand_mpnn_use_side_chain_context 1 {args.ligandmpnn_options if args.ligandmpnn_options else ""}"
+    ligandmpnn_options = f"--ligand_mpnn_use_side_chain_context 1 {args.ligandmpnn_options if args.ligandmpnn_options else ''}"
 
     # set up general rosetta options
 
