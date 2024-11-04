@@ -815,7 +815,7 @@ def main(args):
                 # calculate composite score
                 backbones.calculate_composite_score(
                     name="pre_esm_comp_score",
-                    scoreterms=["rfdiffusion_lig_contacts", "rfdiffusion_ligand_clashes", "rfdiffusion_rog", "postdiffusion_ligandmpnn_overall_confidence"],
+                    scoreterms=["rfdiffusion_lig_contacts", "rfdiffusion_ligand_clashes", "rfdiffusion_rog_data", "postdiffusion_ligandmpnn_overall_confidence"],
                     weights=[-1, 1, 1, -1,],
                     plot=True
                 )
@@ -870,7 +870,7 @@ def main(args):
                 # calculate composite score
                 backbones.calculate_composite_score(
                     name="pre_esm_comp_score",
-                    scoreterms=["bbopt_total_score", "bbopt_lig_contacts", "bbopt_ligand_clashes", "rfdiffusion_rog", "mpnn_overall_confidence"],
+                    scoreterms=["bbopt_total_score", "bbopt_lig_contacts", "bbopt_ligand_clashes", "rfdiffusion_rog_data", "mpnn_overall_confidence"],
                     weights=[1, -1, 1, -1, -1],
                     plot=True
                 )
@@ -1540,7 +1540,7 @@ def main(args):
             prefix = "shell_diversification",
             nseq = 30,
             model_type = "ligand_mpnn",
-            options = f"--ligand_mpnn_use_side_chain_context 1 --temperature 0.2 {args.ligandmpnn_options if args.ligandmpnn_options else ""}",
+            options = f"--ligand_mpnn_use_side_chain_context 1 --temperature 0.2 {args.ligandmpnn_options if args.ligandmpnn_options else ''}",
             pose_options = "variants_pose_opts",
             fixed_res_col = "fixed_residues"
         )
