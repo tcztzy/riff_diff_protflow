@@ -820,7 +820,7 @@ def main(args):
                     plot=True
                 )
 
-                backbones.filter_poses_by_rank(n=args.screen_esm_input_poses, score_col="pre_esm_comp_score", ascending=False, prefix="esm_input_filter", plot=True)
+                backbones.filter_poses_by_rank(n=args.screen_esm_input_poses, score_col="pre_esm_comp_score", prefix="esm_input_filter", plot=True)
 
 
             else:
@@ -876,7 +876,7 @@ def main(args):
                 )
 
                 # filter esm input poses
-                backbones.filter_poses_by_rank(n=args.screen_esm_input_poses, score_col="pre_esm_comp_score", ascending=False, prefix="esm_input_filter", plot=True)
+                backbones.filter_poses_by_rank(n=args.screen_esm_input_poses, score_col="pre_esm_comp_score", prefix="esm_input_filter", plot=True)
 
             # predict with ESMFold
             logging.info(f"LigandMPNN finished, now predicting {len(backbones)} sequences using ESMFold.")
