@@ -625,7 +625,7 @@ def main(args):
         for index, series in pose_df.iterrows():
             chain = struct[series['model_num']]['A']
             if channel_path and args.preserve_channel_coordinates == True:
-                if distance_detection(chain, load_structure_from_pdbfile(channel_path)[args.channel_chain], True, False, args.channel_clash_detection_vdw_multiplier, database=database_dir) == True:
+                if distance_detection(chain, load_structure_from_pdbfile(channel_path)[args.channel_chain], True, False, args.channel_clash_detection_vdw_multiplier) == True:
                     channel_clashes += 1
                     continue
             chain.id = chain_alphabet()[counter]
