@@ -1531,9 +1531,9 @@ def main(args):
 
         # only diversify around ligand, keep rest fixed
         if args.variants_mutations_csv:
-            shell_backbones.df["variants_pose_opts"] = [f"{mut_opts} --redesigned_residues {shell.to_string(delim=" ")}" for mut_opts, shell in zip(shell_backbones.df["variants_pose_opts"].to_list(), shell_backbones.df["ligand_shell"].to_list())]
+            shell_backbones.df["variants_pose_opts"] = [f"{mut_opts} --redesigned_residues {shell.to_string(delim=' ')}" for mut_opts, shell in zip(shell_backbones.df["variants_pose_opts"].to_list(), shell_backbones.df["ligand_shell"].to_list())]
         else:
-            shell_backbones.df["variants_pose_opts"] = [f"--redesigned_residues {shell.to_string(delim=" ")}" for shell in shell_backbones.df["ligand_shell"].to_list()]
+            shell_backbones.df["variants_pose_opts"] = [f"--redesigned_residues {shell.to_string(delim=' ')}" for shell in shell_backbones.df["ligand_shell"].to_list()]
 
         shell_backbones = ligand_mpnn.run(
             poses = shell_backbones,
