@@ -328,8 +328,8 @@ def combine_screening_results(dir: str, prefixes: list, scores: list, weights: l
     # recalculate composite score over all screening runs
     poses.calculate_composite_score(
         name="design_composite_score",
-        scoreterms=["esm_plddt", "esm_tm_TM_score_ref", "esm_catres_bb_rmsd", "esm_catres_heavy_rmsd", "esm_lig_contacts", "esm_ligand_clashes"],
-        weights=[-1, -1, 4, 3, -0.5, 0.5],
+        scoreterms=["esm_plddt", "esm_tm_TM_score_ref", "esm_catres_bb_rmsd", "esm_catres_heavy_rmsd", "esm_lig_contacts", "esm_ligand_clashes", "esm_rog_data"],
+        weights=[-1, -1, 4, 3, -0.5, 0.5, 1],
         plot=True
     )
 
@@ -589,6 +589,7 @@ def main(args):
     chain_adder = protflow.tools.protein_edits.ChainAdder(jobstarter = small_cpu_jobstarter)
     chain_remover = protflow.tools.protein_edits.ChainRemover(jobstarter = small_cpu_jobstarter)
     bb_rmsd = BackboneRMSD(chains="A", jobstarter = small_cpu_jobstarter)
+    fragment_motif_bb_rmsd = MotifRMSD(ref_col = "updated_reference_frags_location", target_motif = "motif_residues", ref_motif = "motif_residues", atoms=["N", "CA", "C"], jobstarter=small_cpu_jobstarter)
     catres_motif_bb_rmsd = MotifRMSD(ref_col = "updated_reference_frags_location", target_motif = "fixed_residues", ref_motif = "fixed_residues", atoms=["N", "CA", "C"], jobstarter=small_cpu_jobstarter)
     catres_motif_heavy_rmsd = MotifRMSD(ref_col = "updated_reference_frags_location", target_motif = "fixed_residues", ref_motif = "fixed_residues", jobstarter=small_cpu_jobstarter)
     ligand_clash = LigandClashes(ligand_chain="Z", factor=args.ligand_clash_factor, atoms=['N', 'CA', 'C', 'O'], jobstarter=small_cpu_jobstarter)
@@ -741,9 +742,15 @@ def main(args):
             # calculate ROG after RFDiffusion, when channel chain is already removed:
             logging.info(f"Calculating rfdiffusion_rog and rfdiffusion_catres_rmsd")
             backbones = rog_calculator.run(poses=backbones, prefix="rfdiffusion_rog")
+
+            # calculate rmsds
             backbones = catres_motif_bb_rmsd.run(
                 poses = backbones,
-                prefix = "rfdiffusion_catres",
+                prefix = "rfdiffusion_catres"
+            )
+            backbones = fragment_motif_bb_rmsd.run(
+                poses = backbones,
+                prefix = "rfdiffusion_motif"
             )
 
             # add back the ligand:
@@ -781,7 +788,11 @@ def main(args):
                 backbones.filter_poses_by_value(score_col="rfdiffusion_rog_data", value=args.rfdiffusion_max_rog, operator="<=", prefix="rfdiffusion_rog", plot=True)
             if args.rfdiffusion_min_ligand_contacts:
                 backbones.filter_poses_by_value(score_col="rfdiffusion_lig_contacts", value=args.rfdiffusion_min_ligand_contacts, operator=">=", prefix="rfdiffusion_lig_contacts", plot=True)
-            
+            if args.rfdiffusion_catres_bb_rmsd:
+                backbones.filter_poses_by_value(score_col="rfdiffusion_catres_rmsd", value=args.rfdiffusion_catres_bb_rmsd, operator="<=", prefix="rfdiffusion_catres_bb_rmsd", plot=True)
+            if args.rfdiffusion_motif_bb_rmsd:
+                backbones.filter_poses_by_value(score_col="rfdiffusion_motif_rmsd", value=args.rfdiffusion_motif_bb_rmsd, operator="<=", prefix="rfdiffusion_motif_bb_rmsd", plot=True)
+
             if len(backbones.df) == 0:
                 logging.warning(f"No poses passed RFdiffusion filtering steps during {prefix}")
                 prefixes.remove(prefix)
@@ -799,7 +810,18 @@ def main(args):
                     model_type = "ligand_mpnn",
                     fixed_res_col = "fixed_residues",
                     return_seq_threaded_pdbs_as_pose= False
-            )
+                )
+
+                # calculate composite score
+                backbones.calculate_composite_score(
+                    name="pre_esm_comp_score",
+                    scoreterms=["rfdiffusion_lig_contacts", "rfdiffusion_ligand_clashes", "rfdiffusion_rog_data", "postdiffusion_ligandmpnn_overall_confidence"],
+                    weights=[-1, 1, 1, -1,],
+                    plot=True
+                )
+
+                backbones.filter_poses_by_rank(n=args.screen_esm_input_poses, score_col="pre_esm_comp_score", ascending=False, prefix="esm_input_filter", plot=True)
+
 
             else:
                 backbones = ligand_mpnn.run(
@@ -810,7 +832,7 @@ def main(args):
                     model_type = "ligand_mpnn",
                     fixed_res_col = "fixed_residues",
                     return_seq_threaded_pdbs_as_pose = True
-            )
+                )
                 # add covalent bonds info to poses pre-relax
                 backbones = add_covalent_bonds_info(poses=backbones, prefix="bbopt_cov_info", covalent_bonds_col="covalent_bonds")
 
@@ -828,6 +850,10 @@ def main(args):
                 # filter backbones down to starting backbones
                 backbones.filter_poses_by_rank(n=3, score_col=f"bbopt_total_score", remove_layers=2)
 
+                # calculate ligand contacts and clashes again
+                backbones = ligand_clash.run(poses=backbones, prefix="bbopt_ligand")
+                backbones = ligand_contacts.run(poses=backbones, prefix="bbopt_lig")
+
                 # run ligandmpnn on relaxed poses
                 backbones = ligand_mpnn.run(
                     poses = backbones,
@@ -839,7 +865,18 @@ def main(args):
                 )
 
                 # filter backbones down to starting backbones
-                backbones.filter_poses_by_rank(n=args.screen_num_mpnn_sequences, score_col=f"mpnn_overall_confidence", ascending=False, remove_layers=3)
+                backbones.filter_poses_by_rank(n=args.screen_num_mpnn_sequences, score_col="mpnn_overall_confidence", ascending=False, remove_layers=3)
+
+                # calculate composite score
+                backbones.calculate_composite_score(
+                    name="pre_esm_comp_score",
+                    scoreterms=["bbopt_total_score", "bbopt_lig_contacts", "bbopt_ligand_clashes", "rfdiffusion_rog_data", "mpnn_overall_confidence"],
+                    weights=[1, -1, 1, -1, -1],
+                    plot=True
+                )
+
+                # filter esm input poses
+                backbones.filter_poses_by_rank(n=args.screen_esm_input_poses, score_col="pre_esm_comp_score", ascending=False, prefix="esm_input_filter", plot=True)
 
             # predict with ESMFold
             logging.info(f"LigandMPNN finished, now predicting {len(backbones)} sequences using ESMFold.")
@@ -859,6 +896,7 @@ def main(args):
             backbones = catres_motif_bb_rmsd.run(poses = backbones, prefix = "esm_catres_bb")
             backbones = bb_rmsd.run(poses = backbones, ref_col="rfdiffusion_location", prefix = "esm_backbone")
             backbones = catres_motif_heavy_rmsd.run(poses = backbones, prefix = "esm_catres_heavy")
+            backbones = fragment_motif_bb_rmsd.run(poses = backbones, prefix = "esm_motif")
 
             # calculate TM-Score and get sc-tm score:
             tm_score_calculator.run(
@@ -868,11 +906,11 @@ def main(args):
             )
 
             # filter poses:
-            backbones.filter_poses_by_value(score_col="esm_plddt", value=75, operator=">=")
-            backbones.filter_poses_by_value(score_col="esm_tm_TM_score_ref", value=0.8, operator=">=")
-            backbones.filter_poses_by_value(score_col="esm_catres_bb_rmsd", value=1.5, operator="<=")
-
-            ############################################# BACKBONE FILTER ########################################################
+            backbones.filter_poses_by_value(score_col="esm_plddt", value=75, operator=">=", prefix="screen_esm_plddt", plot=True)
+            backbones.filter_poses_by_value(score_col="esm_tm_TM_score_ref", value=0.8, operator=">=", prefix="screen_esm_TMscore", plot=True)
+            backbones.filter_poses_by_value(score_col="esm_catres_bb_rmsd", value=1.5, operator="<=", prefix="screen_esm_catres_bb_rmsd", plot=True)
+            backbones.filter_poses_by_value(score_col="esm_motif_rmsd", value=1.5, operator="<=", prefix="esm_motif_rmsd", plot=True)
+            backbones.filter_poses_by_value(score_col="esm_rog_data", value=args.rfdiffusion_max_rog, operator="<=", prefix="esm_rog", plot=True)
 
             # add back ligand and determine pocket-ness!
             logging.info(f"Adding Ligand back into the structure for ligand-based pocket prediction.")
@@ -887,13 +925,11 @@ def main(args):
             backbones = ligand_clash.run(poses=backbones, prefix="esm_ligand")
             backbones = ligand_contacts.run(poses=backbones, prefix="esm_lig")
 
-
-
             # calculate multi-scorerterm score for the final backbone filter:
             backbones.calculate_composite_score(
                 name="design_composite_score",
-                scoreterms=["esm_plddt", "esm_tm_TM_score_ref", "esm_catres_bb_rmsd", "esm_catres_heavy_rmsd", "esm_lig_contacts", "esm_ligand_clashes"],
-                weights=[-1, -1, 4, 3, -0.5, 0.5],
+                scoreterms=["esm_plddt", "esm_tm_TM_score_ref", "esm_catres_bb_rmsd", "esm_catres_heavy_rmsd", "esm_lig_contacts", "esm_ligand_clashes", "esm_rog_data"],
+                weights=[-1, -1, 4, 3, -0.5, 0.5, 1],
                 plot=True
             )
 
@@ -1100,6 +1136,7 @@ def main(args):
             logging.info(f"Calculating post-ESMFold RMSDs...")
             backbones = catres_motif_heavy_rmsd.run(poses = backbones, prefix = f"cycle_{cycle}_esm_catres_heavy")
             backbones = catres_motif_bb_rmsd.run(poses = backbones, prefix = f"cycle_{cycle}_esm_catres_bb")
+            backbones = fragment_motif_bb_rmsd.run(poses = backbones, prefix = f"cycle_{cycle}_motif")
             backbones = bb_rmsd.run(poses = backbones, ref_col=f"cycle_{cycle}_bbopt_location", prefix = f"cycle_{cycle}_esm_backbone")
             backbones = tm_score_calculator.run(poses = backbones, prefix = f"cycle_{cycle}_esm_tm", ref_col = f"cycle_{cycle}_bbopt_location")
             
@@ -1110,6 +1147,7 @@ def main(args):
             backbones.filter_poses_by_value(score_col=f"cycle_{cycle}_esm_plddt", value=plddt_cutoff, operator=">=", prefix=f"cycle_{cycle}_esm_plddt", plot=True)
             backbones.filter_poses_by_value(score_col=f"cycle_{cycle}_esm_tm_TM_score_ref", value=0.9, operator=">=", prefix=f"cycle_{cycle}_esm_TM_score", plot=True)
             backbones.filter_poses_by_value(score_col=f"cycle_{cycle}_esm_catres_bb_rmsd", value=catres_bb_rmsd_cutoff, operator="<=", prefix=f"cycle_{cycle}_esm_catres_bb", plot=True)
+            backbones.filter_poses_by_value(score_col=f"cycle_{cycle}_motif_rmsd", value=1.5, operator="<=", prefix=f"cycle_{cycle}_motif_bb", plot=True)
 
             # repack predictions with attnpacker, if set
             if args.attnpacker_repack:
@@ -1500,7 +1538,7 @@ def main(args):
             prefix = "shell_diversification",
             nseq = 30,
             model_type = "ligand_mpnn",
-            options = f"--ligand_mpnn_use_side_chain_context 1 --temperature 0.2 {args.ligandmpnn_options if args.ligandmpnn_options else ""}",
+            options = f"--ligand_mpnn_use_side_chain_context 1 --temperature 0.2 {args.ligandmpnn_options if args.ligandmpnn_options else ''}",
             pose_options = "variants_pose_opts",
             fixed_res_col = "fixed_residues"
         )
@@ -1787,8 +1825,9 @@ if __name__ == "__main__":
     argparser.add_argument("--screen_num_rfdiffusions", type=int, default=5, help="Number of backbones to generate per input path during screening.")
     argparser.add_argument("--screen_skip_mpnn_rlx_mpnn", action="store_true", help="Skip LigandMPNN-RELAX-LigandMPNN steps and just run LigandMPNN once before prediction with ESMFold. Faster, but lower success rates (only recommended for initial screening purposes).")
     argparser.add_argument("--screen_num_mpnn_sequences", type=int, default=30, help="Number of LigandMPNN sequences per backbone that should be generated and predicted with ESMFold post-RFdiffusion.")
-    argparser.add_argument("--screen_num_seq_thread_sequences", type=int, default=5, help="Number of LigandMPNN sequences that should be generated during the sequence threading phase (input for backbone optimization). Only used if <screen_mpnn_rlx_mpnn> is True.")
+    argparser.add_argument("--screen_num_seq_thread_sequences", type=int, default=3, help="Number of LigandMPNN sequences that should be generated during the sequence threading phase (input for backbone optimization). Only used if <screen_mpnn_rlx_mpnn> is True.")
     argparser.add_argument("--screen_prefix", type=str, default=None, help="Prefix for screening runs for testing different settings. Will be reused for subsequent steps if not specified otherwise.")
+    argparser.add_argument("--screen_esm_input_poses", type=int, default=5000, help="Maximum total number of poses that should be predicted with ESMFold.")
 
     # refinement optionals
     argparser.add_argument("--ref_input_json", type=str, default=None, help="Read in a poses json file containing input poses for refinement. Screening will be skipped.")
@@ -1845,6 +1884,11 @@ if __name__ == "__main__":
     argparser.add_argument("--rfdiffusion_max_rog", type=float, default=19, help="Filter rfdiffusion output for radius of gyration before passing poses to LigandMPNN.")
     argparser.add_argument("--min_ligand_contacts", type=float, default=3, help="Minimum number of ligand contacts per ligand heavyatom for the design to be a success.")
     argparser.add_argument("--ligand_clash_factor", type=float, default=0.8, help="Factor for determining clashes. Set to 0 if ligand clashes should be ignored.")
+    argparser.add_argument("--rfdiffusion_catres_bb_rmsd", type=float, default=1, help="Filter RFdiffusion output for catalytic residue backbone rmsd.")
+    argparser.add_argument("--rfdiffusion_motif_bb_rmsd", type=float, default=1, help="Filter RFdiffusion output for fragment motif backbone rmsd.")
+
+
+    
 
     arguments = argparser.parse_args()
 

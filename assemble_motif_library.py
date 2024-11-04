@@ -19,7 +19,7 @@ from protflow.utils.plotting import violinplot_multiple_cols, violinplot_multipl
 from protflow.utils.utils import vdw_radii
 from protflow.utils.openbabel_tools import openbabel_fileconverter
 from protflow.poses import description_from_path
-from protflow.residues import from_dict
+from protflow.residues import ResidueSelection, from_dict
 from protflow.config import PROTFLOW_ENV
 
 
@@ -38,7 +38,7 @@ def identify_rotamer_by_bfactor_probability(entity):
     resnum = residue.id[1]
     return resnum
 
-def distance_detection(entity1, entity2, bb_only:bool=True, ligand:bool=False, clash_detection_vdw_multiplier:float=1.0, database:str='database', resnum:int=None, covalent_bonds:str=None):
+def distance_detection(entity1, entity2, bb_only:bool=True, ligand:bool=False, clash_detection_vdw_multiplier:float=1.0, resnum:int=None, covalent_bonds:str=None):
     '''
     checks for clashes by comparing VanderWaals radii. If clashes with ligand should be detected, set ligand to true. Ligand chain must be added as second entity.
     bb_only: only detect backbone clashes between to proteins or a protein and a ligand.
@@ -311,7 +311,7 @@ def run_clash_detection(combinations, num_combs, directory, bb_multiplier, sc_mu
 
     in_df = pd.concat(in_df).reset_index(drop=True)
 
-    cmds = [f"{os.path.join(PROTFLOW_ENV, "python")} {script_path} --pkl {json} --working_dir {directory} --bb_multiplier {bb_multiplier} --sc_multiplier {sc_multiplier} --output_prefix {str(index)} --database_dir {database}" for index, json in enumerate(ensemble_names)]
+    cmds = [f"{os.path.join(PROTFLOW_ENV, 'python')} {script_path} --pkl {json} --working_dir {directory} --bb_multiplier {bb_multiplier} --sc_multiplier {sc_multiplier} --output_prefix {str(index)} --database_dir {database}" for index, json in enumerate(ensemble_names)]
 
     log_and_print(f'Distributing clash detection to cluster...')
 
@@ -411,7 +411,7 @@ def import_fragment_json_files(input_dir:str):
     input_jsons = sorted(list(set(input_jsons)))
 
     inputs = []
-    column_names = ['model_num', 'rotamer_pos', 'AAs', 'backbone_score', 'fragment_score', 'rotamer_probability', 'covalent_bond', 'ligand_chain', 'poses', 'poses_description']
+    column_names = ['model_num', 'rotamer_pos', 'AAs', 'backbone_score', 'fragment_score', 'rotamer_probability', 'covalent_bonds', 'ligand_chain', 'poses', 'poses_description']
     for file in input_jsons:
         df = pd.read_json(file)
         if not all(column in df.columns for column in column_names):
@@ -519,7 +519,8 @@ def sort_dataframe_groups_by_column(df:pd.DataFrame, group_col:str, sort_col:str
     return df
 
 def concat_columns(group):
-    return ','.join(group.astype(str))
+    non_null_elements = group.dropna().astype(str)
+    return ','.join(non_null_elements) if not non_null_elements.empty else None
 
 def split_str_to_dict(key_str, value_str, sep):
     return dict(zip(key_str.split(sep), [list(i) for i in value_str.split(sep)]))
@@ -528,6 +529,16 @@ def create_motif_residues(chain_str, fragsize_str, sep:str=","):
     motif_residues = [[i for i in range(1, int(fragsize)+1)] for fragsize in fragsize_str.split(sep)]
     return dict(zip(chain_str.split(sep), motif_residues))
 
+def replace_covalent_bonds_chain(chain:str, covalent_bonds:str=None) -> ResidueSelection:
+    if not isinstance(covalent_bonds, str):
+        return None
+    covalent_bonds = covalent_bonds.split(",")
+    new_cov_bonds = []
+    for cov_bond in covalent_bonds:
+        rot, lig = cov_bond.split(":")
+        rechained = rot.split("_")[0][:-1] + chain + "_" + rot.split("_")[1]
+        new_cov_bonds.append(":".join([rechained, lig]))
+    return ",".join(new_cov_bonds)
 
 def main(args):
     '''
@@ -631,11 +642,7 @@ def main(args):
         pose_df['poses'] = os.path.abspath(filename)
         chains.append(chain_alphabet()[counter])
         counter += 1
-        #TODO: no idea if this is still required
-        if 'covalent_bond' in pose_df.columns:
-            pose_df['covalent_bond'] = pose_df['covalent_bond'].replace(np.nan, None)
-        else:
-            pose_df['covalent_bond'] = None
+        pose_df["covalent_bonds"] = pose_df.apply(lambda row: replace_covalent_bonds_chain(row["chain_id"], row['covalent_bonds']), axis=1)
         df_list.append(pose_df)
 
     ligands = [lig for lig in struct[0]['Z'].get_residues()]
@@ -799,12 +806,13 @@ def main(args):
                  'path_score': 'mean', 
                  'backbone_probability': [("backbone_probability", concat_columns), ("backbone_probability_mean", "mean")],
                  'rotamer_probability': [("rotamer_probability", concat_columns), ("rotamer_probability_mean", "mean")],
-                 'phi_psi_occurrence': [("phi_psi_occurrence", concat_columns), ("phi_psi_occurrence_mean", "mean")]}
+                 'phi_psi_occurrence': [("phi_psi_occurrence", concat_columns), ("phi_psi_occurrence_mean", "mean")],
+                 'covalent_bonds': concat_columns}
 
     selected_paths = top_path_df.groupby('path_name', sort=False).agg(aggregate).reset_index(names=["path_name"])
     selected_paths.columns = ['path_name', 'poses', 'chain_id', 'model_num', 'rotamer_pos', 'frag_length',
                                'path_score', 'backbone_probability', 'backbone_probability_mean', 'rotamer_probability',
-                               'rotamer_probability_mean','phi_psi_occurrence', 'phi_psi_occurrence_mean']
+                               'rotamer_probability_mean','phi_psi_occurrence', 'phi_psi_occurrence_mean', 'covalent_bonds']
     
     # create residue selections
     selected_paths["fixed_residues"] = selected_paths.apply(lambda row: split_str_to_dict(row['chain_id'], row['rotamer_pos'], sep=","), axis=1)
@@ -845,7 +853,7 @@ def main(args):
             # store ligand as .mol file for rosetta .molfile-to-params.py
             log_and_print(f"Running 'molfile_to_params.py' to generate params file for Rosetta.")
             lig_molfile = openbabel_fileconverter(input_file=lig_path, output_file=lig_path.replace(".pdb", ".mol2"), input_format="pdb", output_format=".mol2")
-            cmd = f"{os.path.join(PROTFLOW_ENV, "python")} {os.path.join(utils_dir, 'molfile_to_params.py')} -n {lig_name} -p {ligand_dir}/LG{index+1} {lig_molfile} --keep-names --clobber --chain=Z"
+            cmd = f"{os.path.join(PROTFLOW_ENV, 'python')} {os.path.join(utils_dir, 'molfile_to_params.py')} -n {lig_name} -p {ligand_dir}/LG{index+1} {lig_molfile} --keep-names --clobber --chain=Z"
             LocalJobStarter().start(cmds=[cmd], jobname="moltoparams", output_path=ligand_dir)
             params_paths.append(lig_path.replace(".pdb", ".params"))
         else:

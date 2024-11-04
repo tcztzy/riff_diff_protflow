@@ -510,7 +510,7 @@ def identify_positions_for_rotamer_insertion(fraglib_path, rotlib, rot_sec_struc
 
     #sbatch_options = ["-c1", f'-e {directory}/{prefix}_identify_rotamer_positions.err -o {directory}/{prefix}_identify_rotamer_positions.out']
 
-    cmds = [f"{os.path.join(PROTFLOW_ENV, "python")} {script_path} --input_json {in_file} --fraglib {fraglib_path} --output_pickle {out_file} --phi_psi_bin {phi_psi_bin} --chi_std_multiplier {chi_std_multiplier}" for in_file, out_file in zip(in_filenames, out_filenames)]
+    cmds = [f"{os.path.join(PROTFLOW_ENV, 'python')} {script_path} --input_json {in_file} --fraglib {fraglib_path} --output_pickle {out_file} --phi_psi_bin {phi_psi_bin} --chi_std_multiplier {chi_std_multiplier}" for in_file, out_file in zip(in_filenames, out_filenames)]
     if rot_sec_struct:
         cmds = [cmd + f" --rot_sec_struct {rot_sec_struct}" for cmd in cmds]
     
@@ -1582,7 +1582,7 @@ if __name__ == "__main__":
     argparser.add_argument("--channel_fragment_clash_detection_vdw_multiplier", type=float, default=1.0, help="Multiplier for VanderWaals radii for clash detection between fragment backbone and channel placeholder. Clash is detected if a distance between atoms < (VdW_radius_atom1 + VdW_radius_atom2)*multiplier.")
 
     # options if running in fragment picking mode (<pick_frags_from_db> is set)
-    argparser.add_argument("--fragsize", type=int, default=5, help="Size of output fragments. Only used if <pick_frags_from_db> is set.")
+    argparser.add_argument("--fragsize", type=int, default=7, help="Size of output fragments. Only used if <pick_frags_from_db> is set.")
     argparser.add_argument("--rot_sec_struct", type=str, default=None, help="Limit fragments to secondary structure at rotamer position. Provide string of one-letter code of dssp secondary structure elements (B, E, G, H, I, T, S, -), e.g. 'HE' if rotamer should be in helices or beta strands.")
     argparser.add_argument("--frag_sec_struct_fraction", type=str, default=None, help="Limit to fragments containing at least fraction of residues with the provided secondary structure. If fragment should have at least 50 percent helical residues OR 60 percent beta-sheet, pass 'H:0.5,E:0.6'")
     argparser.add_argument("--phipsi_occurrence_cutoff", type=float, default=0.5, help="Limit how common the phi/psi combination of a certain rotamer has to be. Value is in percent")
