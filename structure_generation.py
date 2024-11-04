@@ -619,7 +619,7 @@ def main(args):
 
     # set up general rosetta options
 
-    bb_opt_options = f"-parser:protocol {os.path.abspath(os.path.join(args.riff_diff_dir, 'utils', "fr_constrained.xml"))} -beta -ignore_zero_occupancy false"
+    bb_opt_options = f"-parser:protocol {os.path.abspath(os.path.join(args.riff_diff_dir, 'utils', 'fr_constrained.xml'))} -beta -ignore_zero_occupancy false"
     fr_options = f"-parser:protocol {os.path.abspath(os.path.join(protflow.config.AUXILIARY_RUNNER_SCRIPTS_DIR, 'fastrelax_sap.xml'))} -beta -ignore_zero_occupancy false"
     if params:
         fr_options = fr_options + f" -extra_res_fa {' '.join(params)}"
