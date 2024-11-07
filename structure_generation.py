@@ -519,11 +519,13 @@ def update_covalent_bonds_info(bonds:str, original_fixedres:ResidueSelection, up
         return None
     original = original_fixedres.to_list(ordering="rosetta")
     new = updated_fixedres.to_list(ordering="rosetta")
-    resnum = bonds.split("_")[0]
-    idx = original.index(resnum)
-    new_resnum = new[idx]
-    covalent_bond = "_".join([new_resnum] + bonds.split("_")[1:])
-    return covalent_bond
+    new_bonds = []
+    for bond in bonds.split(","):
+        resnum = bond.split("_")[0]
+        idx = original.index(resnum)
+        new_resnum = new[idx]
+        new_bonds.append("_".join([new_resnum] + bond.split("_")[1:]))
+    return ",".join(new_bonds)
 
 def main(args):
     '''executes everyting (duh)'''
