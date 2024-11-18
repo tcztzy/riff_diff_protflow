@@ -515,7 +515,7 @@ def parse_link_from_cov_bond(covalent_bond: str) -> str:
     return f"LINK         {res_atom:<3} {res_id:<3} {res_chain:>1}{res_num:>4}                {lig_atom:<3}  {lig_id:>3} {lig_chain:>1}{lig_num:>4}                  0.00"
 
 def update_covalent_bonds_info(bonds:str, original_fixedres:ResidueSelection, updated_fixedres:ResidueSelection) -> str:
-    # NaN and None checker
+    # NaN and None checker for covalent bonds
     if not bonds or bonds != bonds:
         return None
     original = original_fixedres.to_list(ordering="rosetta")
