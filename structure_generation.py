@@ -165,7 +165,7 @@ def create_ref_results_dir(poses, dir:str, cycle:int):
     os.makedirs(dir, exist_ok=True)
 
     logging.info(f"Plotting outputs of cycle {cycle}.")
-    cols = [f"cycle_{cycle}_esm_plddt", f"cycle_{cycle}_esm_tm_TM_score_ref", f"cycle_{cycle}_esm_catres_bb_rmsd", f"cycle_{cycle}_esm_catres_heavy_rmsd", f"cycle_{cycle}_motif_rmsd", f"cycle_{cycle}_delta_apo_holo", f"cycle_{cycle}_postrelax_ligand_rmsd", f"cycle_{cycle}_postrelax_catres_heavy_rmsd", f"cycle_{cycle}_postrelax_apo_catres_heavy_rmsd", f"cycle_{cycle}_fastrelax_sap_score_mean"],
+    cols = [f"cycle_{cycle}_esm_plddt", f"cycle_{cycle}_esm_tm_TM_score_ref", f"cycle_{cycle}_esm_catres_bb_rmsd", f"cycle_{cycle}_esm_catres_heavy_rmsd", f"cycle_{cycle}_motif_rmsd", f"cycle_{cycle}_delta_apo_holo", f"cycle_{cycle}_postrelax_ligand_rmsd", f"cycle_{cycle}_postrelax_catres_heavy_rmsd", f"cycle_{cycle}_postrelax_apo_catres_heavy_rmsd", f"cycle_{cycle}_fastrelax_sap_score_mean"]
     titles = ["ESMFold pLDDT", "ESMFold TM score", "ESMFold AS \nBackbone RMSD", "ESMFold AS \nSidechain RMSD", "ESMFold Motif \nBackbone RMSD", "Rosetta Delta\nApo Holo Total Score", "Postrelax ligand RMSD", "Postrelax AS\nSidechain RMSD", "Postrelax Apo AS\nSidechain RMSD", "Spatial Aggregation Propensity"]
     y_labels = ["pLDDT", "TMscore", "Angstrom", "Angstrom", "Angstrom", "REU", "Angstrom", "Angstrom", "Angstrom", "AU"]
     dims = [None for _ in cols]
