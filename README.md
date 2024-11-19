@@ -43,6 +43,13 @@ This manual will walk you through each of these steps to create proficient de no
 # FRAGMENT IDENTIFICATION
 
 For each of the active site residues in the theozyme, fragments will be created by inverting the rotamers and attaching a backbone fragment. The fragments are mainly selected based on rotamer preference.
+
+An example command to run fragment_identification.py can be found in the examples folder. Make sure to run this command having the python environment of riff_diff activated that has protflow installed. The command is written to be run from the riff_diff_protflow root directory:
+
+```
+./examples/fragment_identification.sh
+```
+
 By default, the backbone fragment consists of a 7-residue idealized helical fragment, but this can be replaced by custom fragments if desired using the --fragment_pdb flag. The mandatory inputs for fragment identification (identify_fragments.py) are:
   - --riff_diff_dir: required to find paths to database etc
   - --theozyme_pdb: path to the theozyme input
