@@ -1270,7 +1270,11 @@ def main(args):
 
     for resname in args.theozyme_resnums.split(","):
         resnum, chain = split_pdb_numbering(resname)
-        theozyme_residue = theozyme[0][chain][resnum]
+        try:
+            theozyme_residue = theozyme[0][chain][resnum]
+        except:
+            raise KeyError(f"Could not find residue {resnum} on chain {chain} in theozyme {args.theozyme_pdb}!")
+        
         cov_bonds = []
         if args.covalent_bonds:
             if not args.ligands:
