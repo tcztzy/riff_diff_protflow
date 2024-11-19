@@ -918,7 +918,7 @@ def main(args):
                 cols = ["rfdiffusion_catres_rmsd", "rfdiffusion_rog_data", "rfdiffusion_lig_contacts", "rfdiffusion_ligand_clashes", "rfdiffusion_plddt"],
                 titles = ["Template RMSD", "ROG", "Ligand Contacts", "Ligand Clashes", "RFdiffusion pLDDT"],
                 y_labels = ["RMSD [\u00C5]", "ROG [\u00C5]", "#CA", "#Clashes", "pLDDT"],
-                dims = [(0,5), None, None, None, (0.8,1)],
+                dims = [None for _ in cols],
                 out_path = os.path.join(results_dir, "rfdiffusion_statistics.png"),
                 show_fig = False
             )
@@ -939,16 +939,15 @@ def main(args):
                 prefixes.remove(prefix)
                 continue
 
-            # calculate composite score
+            # calculate composite score (rmsds not included, as they are all great after partiall diffusion and hard-filtered for 0.1 A)
             rfdiff_comp_scoreterms = ["rfdiffusion_ligand_clashes", "rfdiffusion_rog_data", "rfdiffusion_lig_contacts"]
             backbones.calculate_composite_score(
                 name="rfdiffusion_comp_score",
                 scoreterms=rfdiff_comp_scoreterms,
-                weights=[1, 1, -1],
-                plot=True)
+                weights=[2, 1, -2]) # rog with lower weight as rogs should be very similar within the partial diffusion group
             
-            # filter backbones down to starting backbones
-            backbones.filter_poses_by_rank(n=args.screen_rfdiffusion_output_per_bb, score_col=f"rfdiffusion_comp_score", remove_layers=1, plot=True, plot_cols=rfdiff_comp_scoreterms)
+            # filter backbones down to diffusion backbones (pre-partial diffusion)
+            backbones.filter_poses_by_rank(n=args.screen_rfdiffusion_output_per_bb, score_col=f"rfdiffusion_comp_score", prefix="rfdiffusion_comp_score", remove_layers=1, plot=True, plot_cols=rfdiff_comp_scoreterms)
 
             ############################################# SEQUENCE DESIGN AND ESMFOLD ########################################################
             # run LigandMPNN
