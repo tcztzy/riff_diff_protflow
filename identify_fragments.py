@@ -1183,7 +1183,7 @@ def main(args):
     for key, value in vars(args).items():
         cmd += f'--{key} {value} '
     cmd = f'{sys.argv[0]} {cmd}'
-    logging.info(cmd)
+    log_and_print(cmd)
 
     #import and prepare stuff
     riff_diff_dir = os.path.abspath(args.riff_diff_dir)
@@ -1242,7 +1242,7 @@ def main(args):
                 for res in theozyme[0][chain].get_residues():
                     if res.id[1] == resnum:
                         lig = theozyme[0][chain][res.id]
-                logging.info(f"Found ligand in chain {chain} with residue number {resnum}.")
+                log_and_print(f"Found ligand in chain {chain} with residue number {resnum}.")
                 lig.detach_parent()
                 # set occupancy to 1 (to prevent downstream issues)
                 for atom in lig.get_atoms():
@@ -1257,10 +1257,10 @@ def main(args):
         channel = copy.deepcopy(theozyme[0][args.channel_chain])
         channel.detach_parent()
         channel.id = "Q"
-        logging.info(f"Found channel placeholder in chain {args.channel_chain}.")
+        log_and_print(f"Found channel placeholder in chain {args.channel_chain}.")
     else:
         channel = None
-        logging.info(f"No channel placeholder chain provided. Channel placeholder will be added automatically in following steps.")
+        log_and_print(f"No channel placeholder chain provided. Channel placeholder will be added automatically in following steps.")
 
     # create output folders
     rotinfo_dir = os.path.join(working_dir, "rotamer_info")
@@ -1270,26 +1270,43 @@ def main(args):
 
     for resname in args.theozyme_resnums.split(","):
         resnum, chain = split_pdb_numbering(resname)
-        theozyme_residue = theozyme[0][chain][resnum]
+        try:
+            theozyme_residue = theozyme[0][chain][resnum]
+        except:
+            raise KeyError(f"Could not find residue {resnum} on chain {chain} in theozyme {args.theozyme_pdb}!")
+        
         cov_bonds = []
         if args.covalent_bonds:
             if not args.ligands:
                 logging.warning("WARNING: Covalent bonds are only useful if ligand is present!")
             for cov_bond in args.covalent_bonds.split(','):
+                # split covalent bond (e.g. 23A-NE2:Z1-C1) into residue and ligand parts (23A-NE2, Z1-C1)
                 theozyme_cov, ligand_cov = cov_bond.split(":")
-                resnum, chain = split_pdb_numbering(ligand_cov.split("-")[0])
-                if not theozyme_cov.split('-')[1] in [atom.name for atom in theozyme_residue.get_atoms()]:
-                    raise KeyError(f"Could not find atom {theozyme_cov.split('-')[1]} from covalent bond {cov_bond} in residue {resname}!")
-                if not ligand_cov.split('-')[1] in [atom.name for atom in lig_dict[chain][resnum].get_atoms()]:
-                    raise KeyError(f"Could not find atom {cov_bond.split(':')[1]} from covalent bond {cov_bond} in ligand {args.ligands}!")
-                cov_bonds.append(f"{theozyme_cov.split('-')[1]}:{ligand_cov.split('-')[1]}")
-            cov_bonds = ",".join(cov_bonds)
+                # split position and atom information (e.g. 23A, NE2)
+                res_pos, res_atom = theozyme_cov.split("-")
+                lig_pos, lig_atom = ligand_cov.split("-")
+                # access residue and chain information for each covalent bond
+                res_resnum, res_chain = split_pdb_numbering(res_pos)
+                lig_resnum, lig_chain = split_pdb_numbering(lig_pos)
+                # check if covalent bond is meant for current residue, go to next covalent bond otherwise
+                if [res_resnum, res_chain] == [resnum, chain]:
+                    log_and_print(f"Covalent bond {cov_bond} identified for residue {chain}{resnum}.")
+                else:
+                    continue
+                # check if covalent bond atoms are present in theozyme residue and ligand
+                if not res_atom in [atom.name for atom in theozyme_residue.get_atoms()]:
+                    raise KeyError(f"Could not find atom {res_atom} from covalent bond {cov_bond} in residue {resname}!")
+                if not lig_atom in [atom.name for atom in lig_dict[lig_chain][lig_resnum].get_atoms()]:
+                    raise KeyError(f"Could not find atom {lig_atom} from covalent bond {cov_bond} in ligand {args.ligands}!")
+                # add covalent bond to list of covalent bonds for this residue
+                cov_bonds.append(f"{res_atom}:{lig_atom}")
+            cov_bonds = ",".join(cov_bonds) if cov_bonds else None
         else:
             cov_bonds = None
                 
         if args.add_equivalent_func_groups:
             residue_identities = identify_residues_with_equivalent_func_groups(theozyme_residue)
-            logging.info(f"Added residues with equivalent functional groups: {residue_identities}")
+            log_and_print(f"Added residues with equivalent functional groups: {residue_identities}")
         else:
             residue_identities = [theozyme_residue.get_resname()]
                 
@@ -1576,7 +1593,7 @@ if __name__ == "__main__":
 
     # stuff you might want to adjust
     argparser.add_argument("--max_frags", type=int, default=100, help="Maximum number of frags that should be returned.")
-    argparser.add_argument("--covalent_bonds", type=str, default=None, help="Add covalent bond(s) between rotamer and ligand in the form 'RotAtomA:ligand_resnum1:LigAtomA,theozyme_resnum:RotAtomB:ligand_resnum2:LigAtomB'. Atom names should follow PDB numbering schemes, e.g. 'NZ:C3' for a covalent bond between a Lysine nitrogen and the third carbon atom of the ligand.")
+    argparser.add_argument("--covalent_bonds", type=str, default=None, help="Add covalent bond(s) between residues and ligands in the form 'Res1-Res1Atom:Lig1-Lig1Atom,Res2-Res2Atom:Lig2-Lig2Atom'. Atom names should follow PDB numbering schemes. Example: 'A23-NE2:Z1-C1,A26-OE1:Z1-C11' for two covalent bonds between the NE2 atom of a Histidine at position A23 to C1 atom of ligand Z1 and the OE1 atom of a glutamic acid at A26 to C11 on the same ligand.")
     argparser.add_argument("--rotamer_ligand_clash_detection_vdw_multiplier", type=float, default=0.75, help="Multiplier for VanderWaals radii for clash detection between rotamer and ligand. Clash is detected if a distance between atoms < (VdW_radius_atom1 + VdW_radius_atom2)*multiplier.")
     argparser.add_argument("--backbone_ligand_clash_detection_vdw_multiplier", type=float, default=1.0, help="Multiplier for VanderWaals radii for clash detection between fragment backbone and ligand. Clash is detected if a distance between atoms < (VdW_radius_atom1 + VdW_radius_atom2)*multiplier.")
     argparser.add_argument("--channel_fragment_clash_detection_vdw_multiplier", type=float, default=1.0, help="Multiplier for VanderWaals radii for clash detection between fragment backbone and channel placeholder. Clash is detected if a distance between atoms < (VdW_radius_atom1 + VdW_radius_atom2)*multiplier.")
