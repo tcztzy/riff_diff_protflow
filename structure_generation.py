@@ -528,6 +528,10 @@ def update_covalent_bonds_info(bonds:str, original_fixedres:ResidueSelection, up
         new_bonds.append("_".join([new_resnum] + bond.split("_")[1:]))
     return ",".join(new_bonds)
 
+def calculate_contact_score(df: pd.DataFrame, contact_col: str, score_col: str, target_value: float) -> pd.DataFrame:
+    df[score_col] = abs(df[contact_col] - target_value)
+    return df
+
 def main(args):
     '''executes everyting (duh)'''
     ################################################# SET UP #########################################################
@@ -774,6 +778,7 @@ def main(args):
             logging.info(f"Calculating Ligand Statistics")
             backbones = ligand_clash.run(poses=backbones, prefix="rfdiffusion_ligand")
             backbones = ligand_contacts.run(poses=backbones, prefix="rfdiffusion_lig")
+            backbones.df = calculate_contact_score(df=backbones.df, contact_col="rfdiffusion_lig_contacts", score_col="rfdiffusion_contacts_score", target_value=9)
 
             # plot rfdiffusion_stats
             results_dir = os.path.join(backbones.work_dir, "results")
@@ -860,6 +865,7 @@ def main(args):
                 # calculate ligand contacts and clashes again
                 backbones = ligand_clash.run(poses=backbones, prefix="bbopt_ligand")
                 backbones = ligand_contacts.run(poses=backbones, prefix="bbopt_lig")
+                backbones.df = calculate_contact_score(df=backbones.df, contact_col="bbopt_lig_contacts", score_col="bbopt_contacts_score", target_value=9)
 
                 # run ligandmpnn on relaxed poses
                 backbones = ligand_mpnn.run(
@@ -877,8 +883,8 @@ def main(args):
                 # calculate composite score
                 backbones.calculate_composite_score(
                     name="pre_esm_comp_score",
-                    scoreterms=["bbopt_total_score", "bbopt_lig_contacts", "bbopt_ligand_clashes", "rfdiffusion_rog_data", "mpnn_overall_confidence"],
-                    weights=[1, -1, 1, -1, -1],
+                    scoreterms=["bbopt_total_score", "bbopt_contacts_score", "bbopt_ligand_clashes", "rfdiffusion_rog_data", "mpnn_overall_confidence"],
+                    weights=[1, 1, 1, -1, -1],
                     plot=True
                 )
 
@@ -914,7 +920,7 @@ def main(args):
 
             # filter poses:
             backbones.filter_poses_by_value(score_col="esm_plddt", value=75, operator=">=", prefix="screen_esm_plddt", plot=True)
-            backbones.filter_poses_by_value(score_col="esm_tm_TM_score_ref", value=0.8, operator=">=", prefix="screen_esm_TMscore", plot=True)
+            backbones.filter_poses_by_value(score_col="esm_tm_TM_score_ref", value=0.9, operator=">=", prefix="screen_esm_TMscore", plot=True)
             backbones.filter_poses_by_value(score_col="esm_catres_bb_rmsd", value=1.5, operator="<=", prefix="screen_esm_catres_bb_rmsd", plot=True)
             backbones.filter_poses_by_value(score_col="esm_motif_rmsd", value=1.5, operator="<=", prefix="esm_motif_rmsd", plot=True)
             backbones.filter_poses_by_value(score_col="esm_rog_data", value=args.rfdiffusion_max_rog, operator="<=", prefix="esm_rog", plot=True)
@@ -931,10 +937,12 @@ def main(args):
 
             backbones = ligand_clash.run(poses=backbones, prefix="esm_ligand")
             backbones = ligand_contacts.run(poses=backbones, prefix="esm_lig")
+            backbones.df = calculate_contact_score(df=backbones.df, contact_col="esm_lig_contacts", score_col="esm_contacts_score", target_value=9)
+
 
             # calculate multi-scorerterm score for the final backbone filter:
-            screen_scoreterms = ["esm_plddt", "esm_tm_TM_score_ref", "esm_catres_bb_rmsd", "esm_catres_heavy_rmsd", "esm_motif_rmsd", "esm_lig_contacts", "esm_ligand_clashes", "esm_rog_data"]
-            screen_weights = [-1, -1, 4, 3, 1, -0.5, 1, 1]
+            screen_scoreterms = ["esm_plddt", "esm_tm_TM_score_ref", "esm_catres_bb_rmsd", "esm_catres_heavy_rmsd", "esm_motif_rmsd", "esm_contacts_score", "esm_ligand_clashes", "esm_rog_data"]
+            screen_weights = [-1, -1, 4, 3, 1, 1, 1, 1]
             backbones.calculate_composite_score(
                 name="screen_composite_score",
                 scoreterms=screen_scoreterms,
@@ -1012,7 +1020,9 @@ def main(args):
     
     ############################################# REFINEMENT ########################################################
     if args.ref_input_json:
-        ref_prefix = f"{args.ref_prefix}_" if args.ref_prefix else ""
+        if args.ref_prefix: ref_prefix = f"{args.ref_prefix}_"
+        elif args.screen_prefix: ref_prefix = f"{args.screen_prefix}_"
+        else: ref_prefix = ""
 
         refinement_dir = os.path.join(args.working_dir, f"{ref_prefix}refinement")
         os.makedirs(refinement_dir, exist_ok=True)
@@ -1287,7 +1297,9 @@ def main(args):
     ########################### FINAL EVALUATION ###########################
     if args.eval_input_json:
         if args.eval_prefix: eval_prefix = f"{args.eval_prefix}_"
-        else: eval_prefix = args.ref_prefix if args.ref_prefix else ""
+        elif args.ref_prefix: eval_prefix = f"{args.ref_prefix}_"
+        elif args.screen_prefix: eval_prefix = f"{args.screen_prefix}_"
+        else: eval_prefix = ""
 
         last_ref_cycle = determine_last_ref_cycle(backbones.df)
         logging.info(f"Last refinement cycle determined as: {last_ref_cycle}")
@@ -1330,7 +1342,7 @@ def main(args):
         backbones = colabfold.run(
             poses=backbones,
             prefix="final_AF2",
-            return_top_n_poses=3,
+            return_top_n_poses=args.eval_calc_stats_over_top_n_poses,
             options="--msa-mode single_sequence"
         )
 
@@ -1381,6 +1393,8 @@ def main(args):
         # calculate ligand clashes and ligand contacts
         backbones = ligand_clash.run(poses=backbones, prefix="final_AF2_ligand")
         backbones = ligand_contacts.run(poses=backbones, prefix="final_AF2_lig")
+        backbones.df = calculate_contact_score(df=backbones.df, contact_col="final_AF2_lig_contacts", score_col="final_AF2_contacts_score", target_value=9)
+
 
         # add covalent bonds info to poses pre-relax
         backbones = add_covalent_bonds_info(poses=backbones, prefix="final_fastrelax_cov_info", covalent_bonds_col="covalent_bonds")
@@ -1467,7 +1481,7 @@ def main(args):
     if args.variants_input_json:
 
         if args.variants_prefix: variants_prefix = f"{args.variants_prefix}_"
-        else: variants_prefix = eval_prefix if args.eval_prefix or args.ref_prefix else ""
+        else: variants_prefix = ""
         
         backbones.set_work_dir(os.path.join(args.working_dir, f"{variants_prefix}variants"))
 
@@ -1518,12 +1532,15 @@ def main(args):
         # filter backbones down to starting backbones
         backbones.filter_poses_by_rank(n=1, score_col="variants_bbopt_total_score", remove_layers=1)
 
-        # select shell around the ligand
-        ligand_shell_selector = DistanceSelector(center="ligand_motif", distance=10, operator="<=", noncenter_atoms="CA")
-        ligand_shell_selector.select(prefix="ligand_shell", poses=backbones)
+        if args.variants_activate_conservation_bias:
+            # write distance conservation bias cmds
+            protflow.tools.ligandmpnn.create_distance_conservation_bias_cmds(poses=backbones, prefix="conservation_bias", center="ligand_motif", shell_distances=args.variants_shell_distances.split(","), shell_biases=args.variants_shell_biases.split(","), jobstarter=small_cpu_jobstarter)
 
-        # create copy of backbones
-        shell_backbones = copy.deepcopy(backbones)
+            # combine with previous pose opts:
+            if args.variants_mutations_csv:
+                backbones.df["variants_pose_opts"] = backbones.df["variants_pose_opts"] + " " + backbones.df["conservation_bias"]
+            else:
+                backbones.df["variants_pose_opts"] = backbones.df["conservation_bias"]
 
         # optimize sequences
         backbones = ligand_mpnn.run(
@@ -1532,28 +1549,9 @@ def main(args):
             nseq = 30,
             model_type = "ligand_mpnn",
             options = ligandmpnn_options,
-            pose_options = "variants_pose_opts" if args.variants_mutations_csv else None,
+            pose_options = "variants_pose_opts" if args.variants_mutations_csv or args.variants_activate_conservation_bias else None,
             fixed_res_col = "fixed_residues"
         )
-
-        # only diversify around ligand, keep rest fixed
-        if args.variants_mutations_csv:
-            shell_backbones.df["variants_pose_opts"] = [f"{mut_opts} --redesigned_residues {shell.to_string(delim=' ')}" for mut_opts, shell in zip(shell_backbones.df["variants_pose_opts"].to_list(), shell_backbones.df["ligand_shell"].to_list())]
-        else:
-            shell_backbones.df["variants_pose_opts"] = [f"--redesigned_residues {shell.to_string(delim=' ')}" for shell in shell_backbones.df["ligand_shell"].to_list()]
-
-        shell_backbones = ligand_mpnn.run(
-            poses = shell_backbones,
-            prefix = "shell_diversification",
-            nseq = 30,
-            model_type = "ligand_mpnn",
-            options = f"--ligand_mpnn_use_side_chain_context 1 --temperature 0.2 {args.ligandmpnn_options if args.ligandmpnn_options else ''}",
-            pose_options = "variants_pose_opts",
-            fixed_res_col = "fixed_residues"
-        )
-
-        backbones.df = pd.concat(backbones.df, shell_backbones.df)
-        backbones.reindex_poses(prefix="post_mpnn", remove_layers=1, force_reindex=True)
 
         # predict structures using ESMFold
         backbones = esmfold.run(
@@ -1727,6 +1725,7 @@ def main(args):
         # calculate ligand clashes and ligand contacts
         backbones = ligand_clash.run(poses=backbones, prefix="variants_AF2_ligand")
         backbones = ligand_contacts.run(poses=backbones, prefix="variants_AF2_lig")
+        backbones.df = calculate_contact_score(df=backbones.df, contact_col="variants_AF2_lig_contacts", score_col="variants_AF2_contacts_score", target_value=9)
 
         # add covalent bonds info to poses pre-relax
         backbones = add_covalent_bonds_info(poses=backbones, prefix="variants_AF2_fastrelax_cov_info", covalent_bonds_col="covalent_bonds")
@@ -1867,6 +1866,7 @@ if __name__ == "__main__":
     argparser.add_argument("--eval_catres_bb_rmsd_cutoff", type=float, default=0.7, help="Cutoff for catres backbone rmsd for the AF2 top model for each pose.")
     argparser.add_argument("--eval_ligand_rmsd_cutoff", type=int, default=2, help="Cutoff for ligand rmsd for the top relaxed model of the top AF2 model for each pose.")
     argparser.add_argument("--eval_drop_previous_results", action="store_true", help="Drop all evaluation columns from poses dataframe (useful if running evaluation again, e.g. after refining first evaluation output)")
+    argparser.add_argument("--eval_calc_stats_over_top_n_poses", type=int, default=1, help="Calculate statistics (plddt, rmsd, etc) over the top N poses from each colabfold input pose.")
 
     # variant generation
     argparser.add_argument("--variants_prefix", type=str, default=None, help="Prefix for variant generation runs for testing different variants.")
@@ -1877,6 +1877,11 @@ if __name__ == "__main__":
     argparser.add_argument("--variants_num_poses_per_bb", type=int, default=5, help="Read in a custom csv containing poses description and mutation columns.")
     argparser.add_argument("--variants_evaluation_input_poses_per_bb", type=int, default=30, help="Number of poses per unique backbone that should go into the evaluation step of variant generation.")
     argparser.add_argument("--variants_evaluation_input_poses", type=int, default=200, help="Number of poses per unique backbone that should go into the evaluation step of variant generation.")
+    argparser.add_argument("--variants_activate_conservation_bias", action="store_true", help="Add a bias for conservation of residues based on distance from ligand to LigandMPNN runs (to sample around ligand more efficiently)")
+    argparser.add_argument("--variants_shell_distances", type=int, default="10,15,20,1000", help="Number of poses per unique backbone that should go into the evaluation step of variant generation.")
+    argparser.add_argument("--variants_shell_biases", type=int, default="0,0.25,0.5,1", help="Number of poses per unique backbone that should go into the evaluation step of variant generation.")
+
+
 
     # rfdiffusion optionals
     argparser.add_argument("--recenter", type=str, default=None, help="Point (xyz) in input pdb towards the diffusion should be recentered. example: --recenter=-13.123;34.84;2.3209")
@@ -1888,11 +1893,10 @@ if __name__ == "__main__":
     argparser.add_argument("--ligandmpnn_options", type=str, default=None, help="Options for ligandmpnn runs.")
 
     # filtering options
-    argparser.add_argument("--rfdiffusion_max_clashes", type=int, default=20, help="Filter rfdiffusion output for ligand-backbone clashes before passing poses to LigandMPNN.")
-    argparser.add_argument("--rfdiffusion_min_ligand_contacts", type=float, default=7, help="Filter rfdiffusion output for number of ligand contacts (Ca atoms within 8A divided by number of ligand atoms) before passing poses to LigandMPNN.")
-    argparser.add_argument("--rfdiffusion_max_rog", type=float, default=19, help="Filter rfdiffusion output for radius of gyration before passing poses to LigandMPNN.")
-    argparser.add_argument("--min_ligand_contacts", type=float, default=3, help="Minimum number of ligand contacts per ligand heavyatom for the design to be a success.")
-    argparser.add_argument("--ligand_clash_factor", type=float, default=0.8, help="Factor for determining clashes. Set to 0 if ligand clashes should be ignored.")
+    argparser.add_argument("--rfdiffusion_max_clashes", type=int, default=10, help="Filter rfdiffusion output for ligand-backbone clashes before passing poses to LigandMPNN.")
+    argparser.add_argument("--rfdiffusion_min_ligand_contacts", type=float, default=4, help="Filter rfdiffusion output for number of ligand contacts (Ca atoms within 8A divided by number of ligand atoms) before passing poses to LigandMPNN.")
+    argparser.add_argument("--rfdiffusion_max_rog", type=float, default=18, help="Filter rfdiffusion output for radius of gyration before passing poses to LigandMPNN.")
+    argparser.add_argument("--ligand_clash_factor", type=float, default=0.9, help="Factor for determining clashes. Set to 0 if ligand clashes should be ignored.")
     argparser.add_argument("--rfdiffusion_catres_bb_rmsd", type=float, default=1, help="Filter RFdiffusion output for catalytic residue backbone rmsd.")
     argparser.add_argument("--rfdiffusion_motif_bb_rmsd", type=float, default=1, help="Filter RFdiffusion output for fragment motif backbone rmsd.")
 
