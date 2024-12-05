@@ -563,7 +563,7 @@ def pool_all_cycle_results(ref_dict: dict, plddt_cutoff:float, bb_rmsd_cutoff:fl
     backbones.df.reset_index(inplace=True, drop=True)
     backbones.set_work_dir(refinement_dir)
     
-    final_scores = [f"cycle_final_{'_'.join(score.split("_")[2:])}" for score in comp_score_scoreterms]
+    final_scores = [f"cycle_final_{'_'.join(score.split('_')[2:])}" for score in comp_score_scoreterms]
 
     # calculate new composite score
     backbones.calculate_composite_score(
@@ -678,8 +678,8 @@ def main(args):
 
     # set up general rosetta options
 
-    bb_opt_options = f"-parser:protocol {os.path.abspath(os.path.join(args.riff_diff_dir, 'utils', 'fr_constrained.xml'))} -beta -ignore_zero_occupancy false"
-    fr_options = f"-parser:protocol {os.path.abspath(os.path.join(protflow.config.AUXILIARY_RUNNER_SCRIPTS_DIR, 'fastrelax_sap.xml'))} -beta -ignore_zero_occupancy false"
+    bb_opt_options = f"-parser:protocol {os.path.abspath(os.path.join(args.riff_diff_dir, 'utils', 'fr_constrained.xml'))} -beta -ignore_zero_occupancy false -flip_HNQ true -use_input_sc true"
+    fr_options = f"-parser:protocol {os.path.abspath(os.path.join(protflow.config.AUXILIARY_RUNNER_SCRIPTS_DIR, 'fastrelax_sap.xml'))} -beta -ignore_zero_occupancy false -flip_HNQ true -use_input_sc true"
     if params:
         fr_options = fr_options + f" -extra_res_fa {' '.join(params)}"
         bb_opt_options = bb_opt_options + f" -extra_res_fa {' '.join(params)}"
@@ -1213,7 +1213,8 @@ def main(args):
             # calculate cutoff & filter
             logging.info(f"Applying post-ESMFold backbone filters...")
             plddt_cutoff = ramp_cutoff(args.ref_plddt_cutoff_start, args.ref_plddt_cutoff_end, cycle, args.ref_cycles)
-            bb_rmsd_cutoff = ramp_cutoff(args.ref_bb_rmsd_cutoff_start, args.ref_bb_rmsd_cutoff_end, cycle, args.ref_cycles)
+            bb_rmsd_cutoff = ramp_cutoff(args.ref_catres_bb_rmsd_cutoff_start, args.ref_catres_bb_rmsd_cutoff_end, cycle, args.ref_cycles)
+            bb_rmsd_cutoff = ramp_cutoff(args.ref_motif_rmsd_cutoff_start, args.ref_motif_rmsd_cutoff_end, cycle, args.ref_cycles)
             backbones.filter_poses_by_value(score_col=f"cycle_{cycle}_esm_plddt", value=plddt_cutoff, operator=">=", prefix=f"cycle_{cycle}_esm_plddt", plot=True)
             backbones.filter_poses_by_value(score_col=f"cycle_{cycle}_esm_tm_TM_score_ref", value=0.9, operator=">=", prefix=f"cycle_{cycle}_esm_TM_score", plot=True)
             backbones.filter_poses_by_value(score_col=f"cycle_{cycle}_esm_catres_bb_rmsd", value=bb_rmsd_cutoff, operator="<=", prefix=f"cycle_{cycle}_esm_catres_bb", plot=True)
@@ -1403,13 +1404,12 @@ def main(args):
         backbones = colabfold.run(
             poses=backbones,
             prefix="final_AF2",
-            return_top_n_poses=args.eval_calc_stats_over_top_n_poses,
+            return_top_n_poses=5,
             options="--msa-mode single_sequence"
         )
 
         # select top 3 predictions and filter for average score
         backbones.calculate_mean_score(name="final_AF2_plddt_mean", score_col="final_AF2_plddt", remove_layers=1)
-        backbones.filter_poses_by_value(score_col="final_AF2_plddt_mean", value=args.eval_mean_plddt_cutoff, operator=">=", prefix="final_AF2_mean_plddt", plot=True)
 
         # calculate backbone rmsds
         backbones = catres_motif_bb_rmsd.run(poses=backbones, prefix=f"final_AF2_catres_bb")
@@ -1432,10 +1432,9 @@ def main(args):
         backbones.filter_poses_by_rank(n=1, score_col="final_AF2_plddt", ascending=False, remove_layers=1 if not args.attnpacker_repack else 2)
 
         # apply rest of the filters
-        backbones.filter_poses_by_value(score_col="final_AF2_catres_bb_rmsd_mean", value=args.eval_mean_catres_bb_rmsd_cutoff, operator="<=", prefix=f"final_AF2_mean_catres_bb_rmsd", plot=True)
         backbones.filter_poses_by_value(score_col="final_AF2_plddt", value=args.eval_plddt_cutoff, operator=">=", prefix="final_AF2_plddt", plot=True)
         backbones.filter_poses_by_value(score_col="final_AF2_tm_TM_score_ref", value=0.9, operator=">=", prefix=f"final_AF2_TM_score", plot=True)
-        backbones.filter_poses_by_value(score_col="final_AF2_ESM_bb_rmsd", value=2.0, operator="<=", prefix="final_AF2_ESM_bb_rmsd", plot=True) # check if AF2 and ESM predictions agree      
+        #backbones.filter_poses_by_value(score_col="final_AF2_ESM_bb_rmsd", value=2.0, operator="<=", prefix="final_AF2_ESM_bb_rmsd", plot=True) # check if AF2 and ESM predictions agree      
         backbones.filter_poses_by_value(score_col="final_AF2_catres_bb_rmsd", value=args.eval_catres_bb_rmsd_cutoff, operator="<=", prefix=f"final_AF2_catres_bb_rmsd", plot=True)
 
         # copy description column for merging with apo relaxed structures
@@ -1629,7 +1628,7 @@ def main(args):
 
         backbones.filter_poses_by_value(score_col=f"variants_esm_plddt", value=args.ref_plddt_cutoff_end, operator=">=", prefix=f"variants_esm_plddt", plot=True)
         backbones.filter_poses_by_value(score_col=f"variants_esm_tm_TM_score_ref", value=0.9, operator=">=", prefix=f"variants_esm_TM_score", plot=True)
-        backbones.filter_poses_by_value(score_col=f"variants_esm_catres_bb_rmsd", value=args.ref_bb_rmsd_cutoff_end, operator="<=", prefix=f"variants_esm_catres_bb", plot=True)
+        backbones.filter_poses_by_value(score_col=f"variants_esm_catres_bb_rmsd", value=args.ref_catres_bb_rmsd_cutoff_end, operator="<=", prefix=f"variants_esm_catres_bb", plot=True)
 
 
         # repack predictions with attnpacker, if set
@@ -1762,7 +1761,7 @@ def main(args):
         backbones.filter_poses_by_value(score_col="variants_AF2_catres_bb_rmsd", value=args.eval_catres_bb_rmsd_cutoff, operator="<=", prefix=f"variants_AF2_mean_catres_bb_rmsd", plot=True)
         backbones.filter_poses_by_value(score_col="variants_AF2_plddt", value=args.eval_plddt_cutoff, operator=">=", prefix="variants_AF2_plddt", plot=True)
         backbones.filter_poses_by_value(score_col="variants_AF2_tm_TM_score_ref", value=0.9, operator=">=", prefix=f"variants_AF2_TM_score", plot=True)
-        backbones.filter_poses_by_value(score_col="variants_AF2_ESM_bb_rmsd", value=2.0, operator="<=", prefix="variants_AF2_ESM_bb_rmsd", plot=True) # check if AF2 and ESM predictions agree      
+        #backbones.filter_poses_by_value(score_col="variants_AF2_ESM_bb_rmsd", value=2.0, operator="<=", prefix="variants_AF2_ESM_bb_rmsd", plot=True) # check if AF2 and ESM predictions agree      
         backbones.filter_poses_by_value(score_col="variants_AF2_catres_bb_rmsd", value=args.eval_catres_bb_rmsd_cutoff, operator="<=", prefix=f"variants_AF2_catres_bb_rmsd", plot=True)
 
         # copy description column for merging with apo relaxed structures
@@ -1899,8 +1898,10 @@ if __name__ == "__main__":
     argparser.add_argument("--ref_input_poses_per_bb", default=None, help="Filter the number of refinement input poses on an input-backbone level. This filter is applied before the ref_input_poses filter.")
     argparser.add_argument("--ref_input_poses", type=int, default=100, help="Maximum number of input poses for refinement cycles after initial RFDiffusion-MPNN-ESM-Rosetta run. Poses will be filtered by screen_composite_score. Filter can be applied on a per-input-backbone level if using the flag --ref_input_per_backbone.")
     argparser.add_argument("--ref_num_mpnn_seqs", type=int, default=25, help="Number of sequences that should be created with LigandMPNN during refinement.")
-    argparser.add_argument("--ref_bb_rmsd_cutoff_end", type=float, default=0.7, help="End value for catres and motif backbone rmsd filter after each refinement cycle. Filter will be ramped from start to end during refinement.")
-    argparser.add_argument("--ref_bb_rmsd_cutoff_start", type=float, default=1.2, help="Start value for catres and motif backbone rmsd filter after each refinement cycle. Filter will be ramped from start to end during refinement.")
+    argparser.add_argument("--ref_catres_bb_rmsd_cutoff_end", type=float, default=0.7, help="End value for catres and motif backbone rmsd filter after each refinement cycle. Filter will be ramped from start to end during refinement.")
+    argparser.add_argument("--ref_catres_bb_rmsd_cutoff_start", type=float, default=1.2, help="Start value for catres and motif backbone rmsd filter after each refinement cycle. Filter will be ramped from start to end during refinement.")
+    argparser.add_argument("--ref_motif_rmsd_cutoff_end", type=float, default=1.0, help="End value for catres and motif backbone rmsd filter after each refinement cycle. Filter will be ramped from start to end during refinement.")
+    argparser.add_argument("--ref_motif_rmsd_cutoff_start", type=float, default=1.5, help="Start value for catres and motif backbone rmsd filter after each refinement cycle. Filter will be ramped from start to end during refinement.")
     argparser.add_argument("--ref_plddt_cutoff_end", type=float, default=85, help="End value for esm plddt filter after each refinement cycle. Filter will be ramped from start to end during refinement.")
     argparser.add_argument("--ref_plddt_cutoff_start", type=float, default=75, help="Start value for esm plddt filter after each refinement cycle. Filter will be ramped from start to end during refinement.")
     argparser.add_argument("--ref_ligand_rmsd_end", type=float, default=2.0, help="End value for esm plddt filter after each refinement cycle. Filter will be ramped from start to end during refinement.")
@@ -1913,16 +1914,14 @@ if __name__ == "__main__":
     # evaluation
     argparser.add_argument("--eval_prefix", type=str, default=None, help="Prefix for evaluation runs for testing different settings or refinement outputs.")
     argparser.add_argument("--eval_input_json", type=str, default=None, help="Read in a custom poses json containing input poses for evaluation.")
-    argparser.add_argument("--eval_input_poses", type=int, default=100, help="Maximum number of input poses for evaluation with AF2 after refinement. Poses will be filtered by screen_composite_score.")
-    argparser.add_argument("--eval_input_poses_per_bb", type=int, default=10, help="Maximum number of input poses per unique diffusion backbone for evaluation with AF2 after refinement. Poses will be filtered by screen_composite_score")
-    argparser.add_argument("--eval_mean_plddt_cutoff", type=float, default=80, help="Cutoff for mean plddt over all AF2 models of each pose.")
+    argparser.add_argument("--eval_input_poses", type=int, default=200, help="Maximum number of input poses for evaluation with AF2 after refinement. Poses will be filtered by screen_composite_score.")
+    argparser.add_argument("--eval_input_poses_per_bb", type=int, default=15, help="Maximum number of input poses per unique diffusion backbone for evaluation with AF2 after refinement. Poses will be filtered by screen_composite_score")
     argparser.add_argument("--eval_mean_catres_bb_rmsd_cutoff", type=float, default=1.0, help="Cutoff for mean catres backbone rmsd over all AF2 models of each pose.")
     argparser.add_argument("--eval_mean_ligand_rmsd_cutoff", type=int, default=2.5, help="Cutoff for mean ligand rmsd over all relaxed models of the top AF2 model for each pose.")
     argparser.add_argument("--eval_plddt_cutoff", type=float, default=85, help="Cutoff for plddt for the AF2 top model for each pose.")
     argparser.add_argument("--eval_catres_bb_rmsd_cutoff", type=float, default=0.7, help="Cutoff for catres backbone rmsd for the AF2 top model for each pose.")
     argparser.add_argument("--eval_ligand_rmsd_cutoff", type=int, default=2, help="Cutoff for ligand rmsd for the top relaxed model of the top AF2 model for each pose.")
     argparser.add_argument("--eval_drop_previous_results", action="store_true", help="Drop all evaluation columns from poses dataframe (useful if running evaluation again, e.g. after refining first evaluation output)")
-    argparser.add_argument("--eval_calc_stats_over_top_n_poses", type=int, default=1, help="Calculate statistics (plddt, rmsd, etc) over the top N poses from each colabfold input pose.")
 
     # variant generation
     argparser.add_argument("--variants_prefix", type=str, default=None, help="Prefix for variant generation runs for testing different variants.")
