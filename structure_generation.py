@@ -463,8 +463,8 @@ def log_cmd(arguments):
 
 def determine_last_ref_cycle(df: pd.DataFrame) -> int:
     cols = [col for col in df.columns if col.startswith("cycle_")]
-    nums = [int(col.split("_")[1]) for col in cols]
-    last_cycle = "final" if "final" in nums else max(nums)
+    nums = [col.split("_")[1] for col in cols]
+    last_cycle = "final" if "final" in nums else max([int(num) for num in nums])
     return last_cycle
 
 def write_rfdiffusion_contig(frag_contigs:str, total_length:int, flanker_length:int, frag_sizes:str, flanker_type:str, channel_contig:str=None, sep=","):
@@ -1345,7 +1345,7 @@ def main(args):
 
         refinement_results_dir = os.path.join(args.working_dir, f"{ref_prefix}refinement_results")
         create_ref_results_dir(poses=backbones, dir=refinement_results_dir, cycle=cycle)
-        backbones.save_scores(out_path=os.path.join(refinement_results_dir, f"results_{ref_prefix}_refinement"))
+        backbones.save_scores(out_path=os.path.join(refinement_results_dir, f"results_{ref_prefix}refinement"))
         backbones.set_work_dir(args.working_dir)
         backbones.save_scores()
 
@@ -1527,8 +1527,11 @@ def main(args):
 
         # create plot for screening, refinement and evaluation
         trajectory_plots = instantiate_trajectory_plotting(plot_dir=backbones.plots_dir, df=backbones.df)
-        for cycle in range(1, last_ref_cycle + 1):
+        if last_ref_cycle == "final":
             trajectory_plots = update_trajectory_plotting(trajectory_plots, backbones.df, cycle)
+        else:
+            for cycle in range(1, last_ref_cycle + 1):
+                trajectory_plots = update_trajectory_plotting(trajectory_plots, backbones.df, cycle)
         trajectory_plots = add_final_data_to_trajectory_plots(backbones.df, trajectory_plots)
 
         eval_results_dir = os.path.join(args.working_dir, f"{eval_prefix}evaluation_results")
