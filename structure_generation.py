@@ -756,7 +756,7 @@ def main(args):
             backbones.set_work_dir(os.path.join(screening_dir, prefix))
 
             # run diffusion
-            diffusion_options = f"diffuser.T=50 potentials.guide_scale=5 potentials.guiding_potentials=[\\'type:substrate_contacts,weight:0\\',\\'type:custom_recenter_ROG,weight:{setting[0]},rog_weight:0,distance:{setting[1]}{recenter}\\'] potentials.guide_decay=quadratic contigmap.length={args.total_length}-{args.total_length} potentials.substrate=LIG"
+            diffusion_options = f"diffuser.T=50 potentials.guide_scale=5 potentials.guiding_potentials=[\\'type:substrate_contacts,weight:0\\',\\'type:custom_recenter_ROG,weight:{setting[0]},rog_weight:0,distance:{setting[1]}{recenter}\\'] potentials.guide_decay=quadratic contigmap.length={args.total_length}-{args.total_length} potentials.substrate=LIG {args.rfdiffusion_options}"
             backbones = rfdiffusion.run(
                 poses=backbones,
                 prefix="rfdiffusion",
@@ -1598,11 +1598,12 @@ def main(args):
             shell_distances = [float(i) for i in args.variants_shell_distances.split(",")]
             shell_biases = [float(i) for i in args.variants_shell_biases.split(",")]
             protflow.tools.ligandmpnn.create_distance_conservation_bias_cmds(poses=backbones, prefix="conservation_bias", center="ligand_motif", shell_distances=shell_distances, shell_biases=shell_biases, jobstarter=small_cpu_jobstarter)
-
             ligandmpnn_options = ligandmpnn_options + f" --temperature {args.variants_bias_mpnn_temp}"
             # combine with previous pose opts:
             if args.variants_mutations_csv:
-                backbones.df["variants_pose_opts"] = backbones.df["conservation_bias"] + " " + backbones.df["variants_pose_opts"]
+                backbones.df["variants_pose_opts"] = backbones.df.apply(lambda row: (row['variants_pose_opts'] or '') + ' ' + (row['conservation_bias']),
+    axis=1
+)
             else:
                 backbones.df["variants_pose_opts"] = backbones.df["conservation_bias"]
 
@@ -1955,9 +1956,7 @@ if __name__ == "__main__":
     argparser.add_argument("--ligand_clash_factor", type=float, default=0.9, help="Factor for determining clashes. Set to 0 if ligand clashes should be ignored.")
     argparser.add_argument("--rfdiffusion_catres_bb_rmsd", type=float, default=1, help="Filter RFdiffusion output for catalytic residue backbone rmsd.")
     argparser.add_argument("--rfdiffusion_motif_bb_rmsd", type=float, default=1, help="Filter RFdiffusion output for fragment motif backbone rmsd.")
-
-
-    
+    argparser.add_argument("--rfdiffusion_options", type=str, default="", help="Additional options for RFdiffusion runs.")
 
     arguments = argparser.parse_args()
 
