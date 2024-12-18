@@ -23,7 +23,7 @@ import protflow.metrics.rmsd
 import protflow.metrics.tmscore
 import protflow.tools.protein_edits
 import protflow.tools.rfdiffusion
-from protflow.poses import Poses
+from protflow.poses import Poses, description_from_path
 from protflow.residues import ResidueSelection
 from protflow.metrics.generic_metric_runner import GenericMetric
 from protflow.metrics.ligand import LigandClashes, LigandContacts
@@ -202,6 +202,8 @@ def create_final_results_dir(poses, dir:str):
     # plot outputs and write alignment script
 
     os.makedirs(dir, exist_ok=True)
+    unrelaxed_dir = os.path.join(dir, "unrelaxed")
+    os.makedirs(unrelaxed_dir, exist_ok=True)
 
     logging.info(f"Plotting final outputs.")
     cols = ["final_AF2_plddt", "final_AF2_mean_plddt", "final_AF2_backbone_rmsd", "final_AF2_catres_heavy_rmsd", "final_fastrelax_total_score", "final_postrelax_catres_heavy_rmsd", "final_postrelax_catres_bb_rmsd", "final_delta_apo_holo", "final_AF2_catres_heavy_rmsd_mean", "final_postrelax_catres_heavy_rmsd_mean", "final_postrelax_ligand_rmsd", "final_postrelax_ligand_rmsd_mean", "final_fastrelax_sap_score_mean"]
@@ -234,6 +236,10 @@ def create_final_results_dir(poses, dir:str):
     poses.save_poses(out_path=dir)
     poses.save_poses(out_path=dir, poses_col="input_poses")
     poses.save_scores(out_path=dir)
+    # copy AF2 predictions to unrelaxed folder
+    for _, pose in poses.df.iterrows():
+        shutil.copy(pose["variants_AF2_ligand_location"], os.path.join(unrelaxed_dir, f"{pose['poses_description']}.pdb"))
+
 
     mut_df = pd.DataFrame(poses.df["poses_description"])
     mut_df["omit_AAs"] = None
@@ -252,11 +258,16 @@ def create_final_results_dir(poses, dir:str):
         target_catres_col = "fixed_residues",
         target_motif_col = "fixed_residues"
     )
+    
+    shutil.copy(os.path.join(dir, "align_results.pml"), os.path.join(unrelaxed_dir, "align_results.pml"))
+
 
 def create_variants_results_dir(poses, dir:str):
     # plot outputs and write alignment script
 
     os.makedirs(dir, exist_ok=True)
+    unrelaxed_dir = os.path.join(dir, "unrelaxed")
+    os.makedirs(unrelaxed_dir, exist_ok=True)
 
     logging.info(f"Plotting final outputs.")
     cols = ["variants_AF2_plddt", "variants_AF2_backbone_rmsd", "variants_AF2_catres_heavy_rmsd", "variants_AF2_fastrelax_total_score", "variants_AF2_postrelax_catres_heavy_rmsd", "variants_AF2_postrelax_catres_bb_rmsd", "variants_AF2_delta_apo_holo", "variants_AF2_postrelax_catres_heavy_rmsd_mean", "variants_AF2_postrelax_ligand_rmsd", "variants_AF2_postrelax_ligand_rmsd_mean", "variants_AF2_fastrelax_sap_score_mean"]
@@ -286,6 +297,10 @@ def create_variants_results_dir(poses, dir:str):
 
     poses.save_poses(out_path=dir)
     poses.save_poses(out_path=dir, poses_col="input_poses")
+    poses.save_poses(out_path=unrelaxed_dir, poses_col="input_poses")
+    # copy AF2 predictions to unrelaxed folder
+    for _, pose in poses.df.iterrows():
+        shutil.copy(pose["variants_AF2_ligand_location"], os.path.join(unrelaxed_dir, f"{pose['poses_description']}.pdb"))
 
     poses.df.sort_values("variants_AF2_composite_score", inplace=True)
     poses.df.reset_index(drop=True, inplace=True)
@@ -303,7 +318,7 @@ def create_variants_results_dir(poses, dir:str):
         target_catres_col = "fixed_residues",
         target_motif_col = "fixed_residues"
     )
-
+    shutil.copy(os.path.join(dir, "align_results.pml"), os.path.join(unrelaxed_dir, "align_results.pml"))
 
 def write_bbopt_opts(row: pd.Series, cycle: int, total_cycles: int, reference_location_col:str, motif_res_col: str, cat_res_col: str, ligand_chain: str) -> str:
     return f"-in:file:native {row[reference_location_col]} -parser:script_vars motif_res={row[motif_res_col].to_string(ordering='rosetta')} cat_res={row[cat_res_col].to_string(ordering='rosetta')} substrate_chain={ligand_chain} sd={0.8 - (0.4 * cycle/total_cycles)}"
@@ -640,7 +655,7 @@ def main(args):
     cpu_jobstarter = SbatchArrayJobstarter(max_cores=args.max_cpus, batch_cmds=args.max_cpus)
     small_cpu_jobstarter = SbatchArrayJobstarter(max_cores=10, batch_cmds=10)
     gpu_jobstarter = cpu_jobstarter if args.cpu_only else SbatchArrayJobstarter(max_cores=args.max_gpus, gpus=1, batch_cmds=args.max_gpus)
-    real_gpu_jobstarter = SbatchArrayJobstarter(max_cores=args.max_gpus, gpus=1, batch_cmds=args.max_gpus)
+    real_gpu_jobstarter = SbatchArrayJobstarter(max_cores=args.max_gpus, gpus=1, batch_cmds=args.max_gpus) # esmfold does not work on cpu
 
     # set up runners
     logging.info(f"Settung up runners.")
@@ -655,9 +670,9 @@ def main(args):
     ligand_contacts = LigandContacts(ligand_chain="Z", min_dist=0, max_dist=8, atoms=['CA'], jobstarter=small_cpu_jobstarter)
     rog_calculator = GenericMetric(module="protflow.utils.metrics", function="calc_rog_of_pdb", jobstarter=small_cpu_jobstarter)
     tm_score_calculator = protflow.metrics.tmscore.TMalign(jobstarter = small_cpu_jobstarter)
-    ligand_mpnn = protflow.tools.ligandmpnn.LigandMPNN(jobstarter = gpu_jobstarter)
+    ligand_mpnn = protflow.tools.ligandmpnn.LigandMPNN(jobstarter = cpu_jobstarter)
     rosetta = protflow.tools.rosetta.Rosetta(jobstarter = cpu_jobstarter, fail_on_missing_output_poses=True)
-    esmfold = protflow.tools.esmfold.ESMFold(jobstarter = real_gpu_jobstarter)
+    esmfold = protflow.tools.esmfold.ESMFold(jobstarter = real_gpu_jobstarter) # esmfold does not work on cpu
     ligand_rmsd = MotifSeparateSuperpositionRMSD(
         ref_col="updated_reference_frags_location",
         super_target_motif="fixed_residues",
@@ -668,7 +683,7 @@ def main(args):
         rmsd_atoms=None,
         rmsd_include_het_atoms=True,
         jobstarter = small_cpu_jobstarter)
-    colabfold = protflow.tools.colabfold.Colabfold(jobstarter=real_gpu_jobstarter)
+    colabfold = protflow.tools.colabfold.Colabfold(jobstarter=gpu_jobstarter)
     if args.attnpacker_repack:
         attnpacker = protflow.tools.attnpacker.AttnPacker(jobstarter=gpu_jobstarter)
 
