@@ -235,10 +235,11 @@ def create_final_results_dir(poses, dir:str):
     poses.df.reset_index(drop=True, inplace=True)
     poses.save_poses(out_path=dir)
     poses.save_poses(out_path=dir, poses_col="input_poses")
+    poses.save_poses(out_path=unrelaxed_dir, poses_col="input_poses")
     poses.save_scores(out_path=dir)
     # copy AF2 predictions to unrelaxed folder
     for _, pose in poses.df.iterrows():
-        shutil.copy(pose["variants_AF2_ligand_location"], os.path.join(unrelaxed_dir, f"{pose['poses_description']}.pdb"))
+        shutil.copy(pose["final_AF2_ligand_location"], os.path.join(unrelaxed_dir, f"{pose['poses_description']}.pdb"))
 
 
     mut_df = pd.DataFrame(poses.df["poses_description"])
@@ -1626,7 +1627,7 @@ def main(args):
         backbones = ligand_mpnn.run(
             poses = backbones,
             prefix = f"variants_mpnn",
-            nseq = 50,
+            nseq = args.variants_mpnn_sequences,
             model_type = "ligand_mpnn",
             options = ligandmpnn_options,
             pose_options = "variants_pose_opts" if args.variants_mutations_csv or args.variants_activate_conservation_bias else None,
@@ -1948,12 +1949,13 @@ if __name__ == "__main__":
     argparser.add_argument("--variants_mutations_csv", type=str, default=None, help="Read in a custom csv containing poses description and mutation columns.")
     argparser.add_argument("--variants_input_poses_per_bb", type=int, default=10, help="Number of poses per unique backbone that variant generation should be performed on.")
     argparser.add_argument("--variants_input_poses", type=int, default=50, help="Number of poses that variant generation should be performed on.")
-    argparser.add_argument("--variants_evaluation_input_poses_per_bb", type=int, default=30, help="Number of poses per unique backbone that should go into the evaluation step of variant generation.")
-    argparser.add_argument("--variants_evaluation_input_poses", type=int, default=200, help="Number of poses per unique backbone that should go into the evaluation step of variant generation.")
+    argparser.add_argument("--variants_evaluation_input_poses_per_bb", type=int, default=50, help="Number of poses per unique backbone that should go into the evaluation step of variant generation.")
+    argparser.add_argument("--variants_evaluation_input_poses", type=int, default=400, help="Number of poses per unique backbone that should go into the evaluation step of variant generation.")
     argparser.add_argument("--variants_activate_conservation_bias", action="store_true", help="Add a bias for conservation of residues based on distance from ligand to LigandMPNN runs (to sample around ligand more efficiently)")
     argparser.add_argument("--variants_shell_distances", type=str, default="10,15,20,1000", help="Shell distances from the ligand. Only active if variants_activate_conservation_bias is set.")
     argparser.add_argument("--variants_shell_biases", type=str, default="0,0.25,0.5,1", help="Conservation bias strength for each shell. 0 means no bias. Only active if variants_activate_conservation_bias is set.")
     argparser.add_argument("--variants_bias_mpnn_temp", type=float, default=0.3, help="LigandMPNN temperature for conservation bias MPNN runs. Higher means more sequence diversity. Only active if variants_activate_conservation_bias is set.")
+    argparser.add_argument("--variants_mpnn_sequences", type=int, default=50, help="Number of sequences that will be generated for each input structure. All of these will be predicted with ESMFold.")
 
     # rfdiffusion optionals
     argparser.add_argument("--recenter", type=str, default=None, help="Point (xyz) in input pdb towards the diffusion should be recentered. example: --recenter=-13.123;34.84;2.3209")
