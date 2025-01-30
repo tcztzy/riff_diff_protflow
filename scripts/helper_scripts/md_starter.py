@@ -92,7 +92,7 @@ def main(args):
 
     # setup jobstarter
     sbatch_jst = protflow.jobstarters.SbatchArrayJobstarter(
-        max_cores = 4,
+        max_cores = 16,
         options = "--nodes=1 --ntasks-per-node=4 --gpus-per-node=1"
     )
     logging.info("Jobstarter configured with max_cores=4 and specified options.")
