@@ -95,6 +95,7 @@ def main(args):
         max_cores = 16,
         options = "--nodes=1 --ntasks-per-node=4 --gpus-per-node=1"
     )
+    sbatch_jst._use_bash(True)
     logging.info("Jobstarter configured with max_cores=4 and specified options.")
 
     # setup gromacs runner
