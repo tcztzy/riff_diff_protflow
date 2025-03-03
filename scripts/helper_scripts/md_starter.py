@@ -25,13 +25,14 @@ Example:
                                     --n_sims 5
 """
 import os
-import logging
 import glob
+import logging
 import argparse
+import pandas as pd
 
 # dependencies
 import protflow
-from protflow.tools.gromacs import Gromacs
+from protflow.tools.gromacs import Gromacs, MDAnalysis
 
 def setup_logging(output_dir):
     """
@@ -92,7 +93,7 @@ def main(args):
 
     # setup jobstarter
     sbatch_jst = protflow.jobstarters.SbatchArrayJobstarter(
-        max_cores = 4,
+        max_cores = 16,
         options = "--nodes=1 --ntasks-per-node=4 --gpus-per-node=1"
     )
     sbatch_jst._use_bash(True)
@@ -115,14 +116,54 @@ def main(args):
     # wrap up
     logging.info("MD simulations finished and files are ready for analysis.")
 
+    if args.ref_df and args.mdanalysis_script and args.reference_frags:
+        logging.info(f"--ref_df and --mdanalysis_script specified. Running {args.mdanalysis_script} on MD simulations based on information from {args.ref_df}")
+        # merge ref_df into poses.df based on description?
+        ref_df = pd.read_json(args.ref_df).reset_index(drop=True)
+        sims.df = sims.df.merge(ref_df, left_on="poses_description", right_on="poses_description")
+
+        # now extract catalytic positions and reference frags location
+        sims.df["reference_frags_location"] = args.reference_frags_dir + sims.df["reference_filename"]
+        sims.df["catpos"] = sims.df["fixed_residues"].map(lambda val: "["+",".join([str(id) for id in val["A"]])+"]")
+
+        # instantiate md analysis runner and its own jobstarter (will run on cpus for better performance)
+        mda_jst = protflow.jobstarters.SbatchArrayJobstarter(max_cores=64)
+        md_analysis = MDAnalysis(script_path=args.mdanalysis_script)
+
+        # prep arguments for md_analysis
+        mda_prefix = "md_analysis"
+        md_analysis.set_pose_options({
+            "gro_file": "md_t0_extract_poses", # location column for .gro file
+            "trajectory_file": "md_fit_poses", # location column of .xtc file (refitted and waters removed)
+            "reference_frag": "reference_frags_location", # location column of reference fragments (needs to be valid location)
+            "catalytic_positions": "catpos", # column holding list of the catalytic positions as finished string for the commandline example: '[14,65,112,178]'
+            "output_dir": mda_prefix
+        })
+
+        # start md_analysis
+        md_analysis.run(
+            poses = sims,
+            prefix = mda_prefix,
+            jobstarter=mda_jst
+        )
+
+        # create plots
+
+
+#trajectory_file:str, reference_frag: str, catalytic_positions: list[int], output_dir: str
 
 if __name__ == "__main__":
-    # setup args
+    # MD Args
     argparser = argparse.ArgumentParser(formatter_class=argparse.ArgumentDefaultsHelpFormatter)
     argparser.add_argument("--input", type=str, required=True, help="Path to directory or singular .pdb file that should be simulated with MD")
     argparser.add_argument("--md_mdp", type=str, required=True, help="Path to the md.mdp params file for the MD run.")
     argparser.add_argument("--output_dir", type=str, required=True, help="Name of directory where outputs should be stored.")
     argparser.add_argument("--n_sims", type=int, default=1, help="Number of simulation replicates to run per input pose.")
+
+    # analysis args
+    argparser.add_argument("--ref_df", type=str, help="Path to DataFrame that holds reference fragments and catalytic residue IDs for which to run MDAnalysis.")
+    argparser.add_argument("--mdanalysis_script", type=str, help="Path to md-analysis script to run on MD simulation outputs.")
+    argparser.add_argument("--reference_frags_dir", type=str, help="Specify path to directory that holds reference frags.")
     arguments = argparser.parse_args()
 
     main(arguments)
