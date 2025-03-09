@@ -310,11 +310,7 @@ def main(gro_file:str, trajectory_file:str, reference_frag: str, catalytic_posit
     #    print(f"Atom ordering of catalytic residues in trajectory and ideal geometry is not the same!")
     #    if traj_catres.names != ideal_catres.names:
     #        raise ValueError(f"Atom ordering in sorted atom lists is also not the same.\ntraj: {traj_catres.names}\nideal: {ideal_catres}")
-    print(not_sorted_traj)
-    print(not_sorted_ideal)
-    print(traj_catres.names)
-    print(ideal_catres.names)
-    
+
     rmsd_analysis = rms.RMSD(
         universe,
         reference=ideal_geometry,
@@ -405,7 +401,7 @@ def main(gro_file:str, trajectory_file:str, reference_frag: str, catalytic_posit
     scores_fn = os.path.join(pose_dir, "mdanalysis_scores.json")
     scores_df = pd.DataFrame.from_dict(
         {
-            "description": [description],
+            "description": [description + "_t0"],
             "location": [gro_file],
             "rmsf_df": rmsf_df_path,
             "reference_distances_df": reference_distances_df_path,
