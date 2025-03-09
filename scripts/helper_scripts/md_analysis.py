@@ -401,7 +401,7 @@ def main(gro_file:str, trajectory_file:str, reference_frag: str, catalytic_posit
     scores_fn = os.path.join(pose_dir, "mdanalysis_scores.json")
     scores_df = pd.DataFrame.from_dict(
         {
-            "description": [description + "_t0"],
+            "description": [description],
             "location": [gro_file],
             "rmsf_df": rmsf_df_path,
             "reference_distances_df": reference_distances_df_path,
