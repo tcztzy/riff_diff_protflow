@@ -131,10 +131,12 @@ def main(args):
 
         # add RA95.5-8F into ref_df
         ra95 = pd.DataFrame.from_dict(ra95_dict)
-        pd.concat([ref_df, ra95]).reset_index(drop=True)
+        ref_df = pd.concat([ref_df, ra95]).reset_index(drop=True)
 
         # prepare merging dataframes:
         sims.df["merge_col"] = sims.df["poses_description"].str.split("_").str[:-3].str.join("_")
+        print(sims.df['merge_col'].values)
+        print(ref_df["poses_description"].values)
 
         sims.df = sims.df.merge(ref_df, left_on="merge_col", right_on="poses_description")
         sims.df.rename(columns={"poses_description_x": "poses_description", "poses_description_y": "ref_poses_description"}, inplace=True)
