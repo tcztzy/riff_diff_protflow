@@ -118,8 +118,22 @@ def main(args):
 
     if args.ref_df and args.mdanalysis_script and args.reference_frags_dir:
         logging.info(f"--ref_df and --mdanalysis_script specified. Running {args.mdanalysis_script} on MD simulations based on information from {args.ref_df}")
+
         # merge ref_df into poses.df based on description?
         ref_df = pd.read_json(args.ref_df).reset_index(drop=True)
+
+        # including RA95.5-8F in simulation (this needs to be fixed later)
+        ra95_dict = {
+            "poses_description": ["af2"],
+            "fixed_residues": [{"A": [51, 83, 110, 180]}],
+            "reference_filename": ["A0-B0-C0-D0_5an7.pdb"]
+        }
+
+        # add RA95.5-8F into ref_df
+        ra95 = pd.DataFrame.from_dict(ra95_dict)
+        pd.concat([ref_df, ra95]).reset_index(drop=True)
+
+        # prepare merging dataframes:
         sims.df["merge_col"] = sims.df["poses_description"].str.split("_").str[:-3].str.join("_")
 
         sims.df = sims.df.merge(ref_df, left_on="merge_col", right_on="poses_description")
