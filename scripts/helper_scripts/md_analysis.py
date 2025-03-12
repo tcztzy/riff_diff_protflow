@@ -174,10 +174,10 @@ class ReferenceDistances(mda_base.AnalysisBase):
         super().__init__(atomgroup.universe.trajectory, verbose, **kwargs)
         self.atom_group = atomgroup
         self.reference_atomgroup = reference_atomgroup
-    
+
     def _prepare(self):
         self.results.reference_distances = []
-    
+
     def _single_frame(self):
         reference_dist = dist(self.atom_group, self.reference_atomgroup)
         self.results.reference_distances.append(reference_dist)
