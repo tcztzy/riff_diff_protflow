@@ -74,10 +74,10 @@ def main(args):
 
     # read in md_analysis scores DF (it references to all paths of MD runs)
     ref_df = pd.read_json(args.input_df) # this dataframe references the locations of all scorefiles that we want to analyze.
-    enzyme_dfs = [df for i, df in ref_df.groupby("input_poses")]
-
+    
     # compile functional amino acids from reference_files col and fixedres:
     ref_df["functional_group_cols"] = ref_df.apply(compile_catres_functional_groups, axis=1)
+    enzyme_dfs = [df for i, df in ref_df.groupby("input_poses")]
 
     # extract trajectory C-alpha RMSDs for (37 enzymes, 2001 time-points, 20 replicates)
     ca_rmsd_data = np.empty((len(enzyme_dfs), len(enzyme_dfs[0]), 2001))
@@ -86,6 +86,7 @@ def main(args):
         for j, replicate_df_path in enumerate(enzyme_df["md_analysis_rmsd_df_path"]):
             replicate_df = pd.read_csv(replicate_df_path)
             ca_rmsd_data[i, j, :] = replicate_df["C-alphas"].to_numpy() # [37, 20, 2001]
+        print(f"extracting rmsd for enzyme {i+1}")
 
     # save
     np.savez(os.path.join(args.output_dir, "ca_rmsd.npz"), ca_rmsd_data)
@@ -94,7 +95,7 @@ def main(args):
     sidechain_asmsd_data = np.empty((len(enzyme_dfs), 4, len(enzyme_dfs[0]), 2001)) # [37 enzymes, 4 catalytic amino acids, 20 replicates, 2001 timepoints]
 
     for enz_idx, enzyme_df in enumerate(enzyme_dfs):
-        for repl_idx, row in enzyme_df.iterrows():
+        for repl_idx, (_, row) in enumerate(enzyme_df.iterrows()):
             # extract info
             replicate_df_path = row["md_analysis_reference_distances_df"]
             functional_group_atoms = row["functional_group_cols"]
@@ -103,6 +104,7 @@ def main(args):
             replicate_df = pd.read_csv(replicate_df_path)
             for aa_idx, amino_acid in enumerate(functional_group_atoms):
                 sidechain_asmsd_data[enz_idx, aa_idx, repl_idx, :] = replicate_df[amino_acid].to_numpy() # [37, 4, 20, 2001]
+        print(f"extracting sidechain refdist for enzyme {enz_idx+1}")
 
     # save ref dist data
     np.savez(os.path.join(args.output_dir, "as_reference_distances.npz"), sidechain_asmsd_data)
@@ -113,29 +115,29 @@ def main(args):
     for enz_idx, enzyme_df in enumerate(enzyme_dfs):
         # collect columns for functional groups
         functional_atoms = enzyme_df.iloc[0]["functional_group_cols"]
-
-        for repl_idx, row in enzyme_df.iterrows():
+    
+        for repl_idx, (_, row) in enumerate(enzyme_df.iterrows()):
             # define data
             replicate_df_path = row["md_analysis_internal_df"]
             repl_ref_df_path = row["md_analysis_internal_ref_df"]
-
+    
             # read dataframes
             internal_df = pd.read_csv(replicate_df_path)
             internal_ref_df = pd.read_csv(repl_ref_df_path)
-
+    
             ### compile columns [70NZ-179OH, etc. ...]
             internal_cols = compile_internal_dist_cols(functional_atoms, list(internal_df.columns))
-
+    
             # subtract measured internal distance from reference internal distances:
             for group_idx, col in enumerate(internal_cols):
                 internal_df[col] = internal_df[col] - internal_ref_df.loc[0, col] # internal_ref_df is a DataFrame with only one row (reference distance is always the same)!
-
+    
                 # add data into numpy array
                 internal_distances_data[enz_idx, group_idx, repl_idx, :] = internal_df[col].to_numpy()
-
+    
                 # add columns into index
                 internal_distances_columns[enz_idx, group_idx] = col
-
+        print(f"extracting sidechain refdist for enzyme {enz_idx+1}")
     # store internal distances data
     np.savez(os.path.join(args.output_dir, "internal_distances.npz"), internal_distances_data)
     np.savez(os.path.join(args.output_dir, "internal_distances_index.npz"), internal_distances_columns)
@@ -144,21 +146,22 @@ def main(args):
     rmsf_data = np.empty((len(enzyme_dfs), 4, 20)) # [37 enzymes, 4 catalytic amino acids, 20 replicates] (only one value per replicate)
     rmsf_columns = np.empty((len(enzyme_dfs), 4), dtype=object)
     for enz_idx, enzyme_df in enumerate(enzyme_dfs):
-        for repl_idx, row in enzyme_df.iterrows():
-            repl_df_path = row["md_analysis_rmsf_path"]
+        for repl_idx, (_, row) in enumerate(enzyme_df.iterrows()):
+            repl_df_path = row["md_analysis_rmsf_df"]
             functional_group_atoms = row["functional_group_cols"]
-
-            # read data
+    
+                # read data
             repl_rmsf_df = pd.read_csv(repl_df_path)
-
+    
             # create hashable index for functional atoms
             repl_rmsf_df["resn_idx"] = repl_rmsf_df["atomname"].str.cat(repl_rmsf_df["resnum"].astype(str), sep="-")
             repl_rmsf_df = repl_rmsf_df.set_index("resn_idx")
-
+    
             # collect functional atom RMSF values
             for fg_idx, functional_group in enumerate(functional_group_atoms):
                 rmsf_data[enz_idx, fg_idx, repl_idx] = repl_rmsf_df.loc[functional_group, "RMSF"]
                 rmsf_columns[enz_idx, fg_idx] = functional_group
+        print(f"extracting rmsf refdist for enzyme {enz_idx+1}")
 
     # STORE
     np.savez(os.path.join(args.output_dir, "rmsf_data.npz"), rmsf_data)
