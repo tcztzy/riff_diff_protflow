@@ -116,11 +116,30 @@ def main(args):
     # wrap up
     logging.info("MD simulations finished and files are ready for analysis.")
 
-    if args.ref_df and args.mdanalysis_script and args.reference_frags:
+    if args.ref_df and args.mdanalysis_script and args.reference_frags_dir:
         logging.info(f"--ref_df and --mdanalysis_script specified. Running {args.mdanalysis_script} on MD simulations based on information from {args.ref_df}")
+
         # merge ref_df into poses.df based on description?
         ref_df = pd.read_json(args.ref_df).reset_index(drop=True)
-        sims.df = sims.df.merge(ref_df, left_on="poses_description", right_on="poses_description")
+
+        # including RA95.5-8F in simulation (this needs to be fixed later)
+        ra95_dict = {
+            "poses_description": ["af2"],
+            "fixed_residues": [{"A": [51, 83, 110, 180]}],
+            "reference_filename": ["A0-B0-C0-D0_5an7.pdb"]
+        }
+
+        # add RA95.5-8F into ref_df
+        ra95 = pd.DataFrame.from_dict(ra95_dict)
+        ref_df = pd.concat([ref_df, ra95]).reset_index(drop=True)
+
+        # prepare merging dataframes:
+        sims.df["merge_col"] = sims.df["poses_description"].str.split("_").str[:-3].str.join("_")
+        print(sims.df['merge_col'].values)
+        print(ref_df["poses_description"].values)
+
+        sims.df = sims.df.merge(ref_df, left_on="merge_col", right_on="poses_description")
+        sims.df.rename(columns={"poses_description_x": "poses_description", "poses_description_y": "ref_poses_description"}, inplace=True)
 
         # now extract catalytic positions and reference frags location
         sims.df["reference_frags_location"] = args.reference_frags_dir + sims.df["reference_filename"]
@@ -128,7 +147,7 @@ def main(args):
 
         # instantiate md analysis runner and its own jobstarter (will run on cpus for better performance)
         mda_jst = protflow.jobstarters.SbatchArrayJobstarter(max_cores=64)
-        md_analysis = MDAnalysis(script_path=args.mdanalysis_script)
+        md_analysis = MDAnalysis(python=args.md_analysis_env, script_path=args.mdanalysis_script)
 
         # prep arguments for md_analysis
         mda_prefix = "md_analysis"
@@ -137,8 +156,9 @@ def main(args):
             "trajectory_file": "md_fit_poses", # location column of .xtc file (refitted and waters removed)
             "reference_frag": "reference_frags_location", # location column of reference fragments (needs to be valid location)
             "catalytic_positions": "catpos", # column holding list of the catalytic positions as finished string for the commandline example: '[14,65,112,178]'
-            "output_dir": mda_prefix
         })
+
+        md_analysis.set_options(f"--output_dir {os.path.join(sims.work_dir, mda_prefix)}")
 
         # start md_analysis
         md_analysis.run(
@@ -164,6 +184,7 @@ if __name__ == "__main__":
     argparser.add_argument("--ref_df", type=str, help="Path to DataFrame that holds reference fragments and catalytic residue IDs for which to run MDAnalysis.")
     argparser.add_argument("--mdanalysis_script", type=str, help="Path to md-analysis script to run on MD simulation outputs.")
     argparser.add_argument("--reference_frags_dir", type=str, help="Specify path to directory that holds reference frags.")
+    argparser.add_argument("--md_analysis_env", type=str, default="/home/mabr3112/anaconda3/envs/mdanalysis/bin/python", help="Path to python env where you have mdanalysis dependencies installed.")
     arguments = argparser.parse_args()
 
     main(arguments)
