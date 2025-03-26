@@ -174,10 +174,10 @@ class ReferenceDistances(mda_base.AnalysisBase):
         super().__init__(atomgroup.universe.trajectory, verbose, **kwargs)
         self.atom_group = atomgroup
         self.reference_atomgroup = reference_atomgroup
-    
+
     def _prepare(self):
         self.results.reference_distances = []
-    
+
     def _single_frame(self):
         reference_dist = dist(self.atom_group, self.reference_atomgroup)
         self.results.reference_distances.append(reference_dist)
@@ -310,11 +310,13 @@ def main(gro_file:str, trajectory_file:str, reference_frag: str, catalytic_posit
     #    print(f"Atom ordering of catalytic residues in trajectory and ideal geometry is not the same!")
     #    if traj_catres.names != ideal_catres.names:
     #        raise ValueError(f"Atom ordering in sorted atom lists is also not the same.\ntraj: {traj_catres.names}\nideal: {ideal_catres}")
-    print(not_sorted_traj)
-    print(not_sorted_ideal)
-    print(traj_catres.names)
-    print(ideal_catres.names)
-    
+
+    #print(type(traj_catres), type(ideal_catres))
+    #print(traj_catres.names, ideal_catres.names)
+
+    #print(traj_catres)
+    #print(ideal_catres)
+
     rmsd_analysis = rms.RMSD(
         universe,
         reference=ideal_geometry,
@@ -328,6 +330,7 @@ def main(gro_file:str, trajectory_file:str, reference_frag: str, catalytic_posit
                            index=rmsd_analysis.results.rmsd[:, 1])
     rmsd_df.index.name = 'Time (ps)'
     rmsd_df.to_csv((rmsd_df_path := output_path.rstrip("/") + '_rmsd.df.csv'))
+    #print(rmsd_df_path)
 
     # ideal_geometry = cpdb.parse(, df=True)
     # cmap = match_ideal_geometry(universe, catalytic_positions, ideal_geometry)
