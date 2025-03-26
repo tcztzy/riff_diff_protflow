@@ -29,7 +29,7 @@ from protflow.metrics.generic_metric_runner import GenericMetric
 from protflow.metrics.ligand import LigandClashes, LigandContacts
 from protflow.metrics.rmsd import BackboneRMSD, MotifRMSD, MotifSeparateSuperpositionRMSD
 import protflow.tools.rosetta
-from protflow.utils.biopython_tools import renumber_pdb_by_residue_mapping, load_structure_from_pdbfile, save_structure_to_pdbfile
+from protflow.utils.biopython_tools import renumber_pdb_by_residue_mapping, load_structure_from_pdbfile, save_structure_to_pdbfile, load_sequence_from_fasta
 import protflow.utils.plotting as plots
 from protflow.tools.residue_selectors import DistanceSelector
 
@@ -237,6 +237,7 @@ def create_final_results_dir(poses, dir:str):
     poses.save_poses(out_path=dir, poses_col="input_poses")
     poses.save_poses(out_path=unrelaxed_dir, poses_col="input_poses")
     poses.save_scores(out_path=dir)
+
     # copy AF2 predictions to unrelaxed folder
     for _, pose in poses.df.iterrows():
         shutil.copy(pose["final_AF2_ligand_location"], os.path.join(unrelaxed_dir, f"{pose['poses_description']}.pdb"))
@@ -594,6 +595,173 @@ def pool_all_cycle_results(ref_dict: dict, plddt_cutoff:float, bb_rmsd_cutoff:fl
     backbones.reindex_poses(prefix="pool_reindex", remove_layers=1, force_reindex=True)
     
     return backbones
+
+def create_mutation_resfiles(omitted_aas:str, allowed_aas:str, name:str, dir:str):
+    os.makedirs(dir, exist_ok=True)
+
+    omitted = []
+    allowed = []
+
+    if isinstance(omitted_aas, str):
+        omitted_aas = omitted_aas.rstrip(";").split(";")
+        for mutation in omitted_aas:
+            position, omitted_aas = mutation.split(":")
+            if not position[0].isalpha():
+                raise KeyError(f"Position for mutations have to include chain information (e.g. A{position}), not just {position}!")
+            omitted.append(f"{position[1:]} {position[0]} NOTAA {omitted_aas}")
+
+    if isinstance(allowed_aas, str):
+        allowed = []
+        allowed_aas = allowed_aas.rstrip(";").split(";")
+        for mutation in allowed_aas:
+            position, allowed_aas = mutation.split(":")
+            if not position[0].isalpha():
+                raise KeyError(f"Position for mutations have to include chain information (e.g. A{position}), not just {position}!")
+            allowed.append(f"{position[1:]} {position[0]} PIKAA {allowed_aas}")
+    mutations = omitted + allowed
+    mutations = sorted(mutations, key=lambda x: int(x.split()[0]))
+    filename = os.path.join(dir, f"{name}.resfile")
+    resfile = "start\n" + "\n".join(mutations)
+    with open(filename, "w") as out:
+        out.write(resfile)
+    return filename
+
+def write_cm_opts(fixed_residues, motif_residues, native_path, design_shell, resfile: str = None):
+    design_shell = design_shell.split(",")
+    cm_script_vars = f"-parser:script_vars resfilepath={resfile} cat_res={fixed_residues.to_string(ordering='rosetta')} motif_res={motif_residues.to_string(ordering='rosetta')} cut1={design_shell[0]} cut2={design_shell[1]} cut3={design_shell[2]} cut4={design_shell[3]} -in:file:native {native_path}"
+    return cm_script_vars
+
+
+def extract_designpositions_from_resfile(resfile):
+    design_positions = []
+    with open(resfile, "r") as r:
+        for line in r:
+            if not line.startswith("NAT") and not line.startswith("start"):
+                design_positions.append(int(line.split()[0]))
+    #filter for unique elements in list
+    #design_positions = sorted(list(set(design_positions)))
+    return(design_positions)
+
+def statsfile_to_df(statsfile: str):
+    #reads in the .stats file output from a coupled-moves run and converts it to a dataframe
+    df = pd.read_csv(statsfile, sep=None, engine='python', header=None, keep_default_na=False)
+    df_scores = df[4].str.split(expand=True)
+    columnheaders = df_scores[df_scores.columns[0::2]]
+    columnheaders = columnheaders.loc[0, :].values.tolist()
+    columnheaders = [i.replace(':','') for i in columnheaders]
+    df_scores = df_scores[df_scores.columns[1::2]]
+    df_scores.columns = columnheaders
+    df_scores = df_scores.astype(float)
+    df_scores["total_score"] = df_scores.sum(axis=1)
+    df_scores["sequence"] = df[3]
+    return(df_scores)
+
+def statsfiles_to_json(input_dir: str, description:str, filename):
+
+    if os.path.isfile(filename):
+        with open(filename) as json_file:
+            structdict = json.load(json_file)
+            return(structdict)
+        
+    #gathers all coupled-moves statsfiles and converts to a single dictionary
+    statsfiles = []
+    resfiles = []
+    for file in os.listdir(input_dir):
+        # 6:-11 ignores protflow rosetta r0001_ prefixes and 0001.stats suffixes
+        if file.endswith(".stats") and file[6:-11] == description:
+            statsfiles.append(os.path.join(input_dir, file))
+        elif file.endswith(".resfile") and file[6:-13] == description:
+            resfiles.append(os.path.join(input_dir, file))
+
+    statsfiles = sorted(statsfiles)
+    resfiles = sorted(resfiles)
+    stats_df_list = []
+    for stats, res in zip(statsfiles, resfiles):
+        statsdf = statsfile_to_df(stats)
+        design_positions = extract_designpositions_from_resfile(res)
+        design_positions = [design_positions for i in range(0, len(statsdf))]
+        statsdf['design_positions'] = design_positions
+        for index, row in statsdf.iterrows():
+            for mut, pos in zip(row['sequence'], row['design_positions']):
+                mut_row = row.copy()
+                mut_row['mutation'] = mut
+                mut_row['position'] = pos
+                stats_df_list.append(mut_row)
+
+    statsdf = pd.DataFrame(stats_df_list)
+    #statsdf['total_score'] = statsdf['total_score'] - statsdf['res_type_constraint']
+
+    structdict = {}
+    for pos, df in statsdf.groupby('position'):
+        posdict = {}
+        for AA, pos_df in df.groupby('mutation'):
+            posdict[AA] = {"pos": pos, "identity": AA, "count": len(pos_df), "ratio": len(pos_df)/len(df), "total_score": [round(score, 2) for score in pos_df['total_score'].to_list()], "total_score_average": round(pos_df['total_score'].mean(), 2), "coordinate_constraint": [round(score, 2) for score in pos_df['coordinate_constraint'].to_list()], "coordinate_constraint_average": round(pos_df['coordinate_constraint'].mean(), 2)}
+        structdict[pos] = posdict
+
+    with open(filename, "w") as outfile:
+        json.dump(structdict, outfile)
+    return(structdict)
+
+def generate_mutations_dict(datadict, occurence_cutoff):
+    '''
+    only accepts mutations that show up in at least <occurence_cutoff> of coupled moves runs. if no mutation is above cutoff, picks the lowest energy one.
+    '''
+    mutations = {}
+    for pos in datadict:
+        df = pd.DataFrame(datadict[pos]).transpose().sort_values('ratio')
+        df_filtered = df[df['ratio'] >= occurence_cutoff]
+        if df_filtered.empty:
+            df_filtered = df[df['ratio'] >= 0.1]
+            if df_filtered.empty:
+                df_filtered = df
+            df_filtered = df_filtered.sort_values('coordinate_constraint_average', ascending=True).head(int(1 + len(df_filtered) / 2))
+            df_filtered = df_filtered.sort_values('total_score_average', ascending=True).head(1)
+        mutations[pos] = df_filtered['identity'].to_list()
+    return mutations
+
+def generate_variants(mutation_dict, seq):
+    mutlist = []
+    poslist = []
+    for pos in mutation_dict:
+        poslist.append(pos)
+        mutlist.append(mutation_dict[pos])
+    combs = list(itertools.product(*mutlist))
+    variants = []
+    for comb in combs:
+        var = copy.deepcopy(seq)
+        for index, AA in enumerate(comb):
+            var[int(poslist[index]) - 1] = AA
+        variants.append(''.join(var))
+    return variants
+
+
+def create_coupled_moves_sequences(output_dir, cm_resultsdir, poses_df, occurence_cutoff):
+
+    os.makedirs(output_dir, exist_ok=True)
+    out_df = []
+    if not os.path.isfile(scorefile := os.path.join(output_dir, "cm_results.json")):
+        for _, row in poses_df.iterrows():
+            statsdict = statsfiles_to_json(cm_resultsdir, row['poses_description'], os.path.join(cm_resultsdir, f"{row['poses_description']}.json"))
+            mutations = generate_mutations_dict(statsdict, occurence_cutoff)
+            seq = list(load_sequence_from_fasta(row["final_fasta_conversion_fasta_location"]).seq)
+            variants_df = pd.DataFrame(generate_variants(mutations, seq), columns=[f'cm_sequences'])
+            variants_df["poses_description"] = row["poses_description"]
+            variants_df = variants_df.merge(poses_df, on="poses_description", how="left")
+            logging.info(f"Generated {len(variants_df.index)} variants for pose {row['poses_description']}.")
+            for seqnum, var in variants_df.iterrows():
+                var['poses_description'] = f"{row['poses_description']}_{seqnum+1:04d}"
+                with open(pose_path := os.path.join(output_dir, f"{var['poses_description']}.fa"), "w") as fasta:
+                    fasta.write(f">{var['poses_description']}\n{var['cm_sequences']}")
+                var['poses'] = pose_path
+                out_df.append(var)
+    
+        out_df = pd.DataFrame(out_df).reset_index(drop=True)
+        out_df.to_json(scorefile)
+
+    else:
+        out_df = pd.read_json(scorefile)
+    return out_df
+    
 
 
 def main(args):
@@ -1572,6 +1740,9 @@ def main(args):
             mutations_dir = os.path.join(backbones.work_dir, "mutations")
             os.makedirs(mutations_dir, exist_ok=True)
             backbones.df["variants_pose_opts"] = backbones.df.apply(lambda row: omit_AAs(row['omit_AAs'], row['allow_AAs'], mutations_dir, row["poses_description"]), axis=1)
+        else:
+            backbones.df["omit_AAs"] = None
+            backbones.df["allow_AAs"] = None
 
         if args.variants_input_poses_per_bb:
             backbones.filter_poses_by_rank(n=args.variants_input_poses_per_bb, score_col="final_composite_score", remove_layers=1)
@@ -1609,36 +1780,72 @@ def main(args):
             pose_options='variants_bbopt_opts'
         )
 
-        if args.variants_activate_conservation_bias:
-            # write distance conservation bias cmds
-            shell_distances = [float(i) for i in args.variants_shell_distances.split(",")]
-            shell_biases = [float(i) for i in args.variants_shell_biases.split(",")]
-            protflow.tools.ligandmpnn.create_distance_conservation_bias_cmds(poses=backbones, prefix="conservation_bias", center="ligand_motif", shell_distances=shell_distances, shell_biases=shell_biases, jobstarter=small_cpu_jobstarter)
-            ligandmpnn_options = ligandmpnn_options + f" --temperature {args.variants_bias_mpnn_temp}"
-            # combine with previous pose opts:
-            if args.variants_mutations_csv:
-                backbones.df["variants_pose_opts"] = backbones.df.apply(lambda row: (row['variants_pose_opts'] or '') + ' ' + (row['conservation_bias']),
-    axis=1
-)
-            else:
-                backbones.df["variants_pose_opts"] = backbones.df["conservation_bias"]
+        if args.variants_run_cm:
+            backbones.df["cm_resfile"] = backbones.df.apply(lambda row: create_mutation_resfiles(row['omit_AAs'], row['allow_AAs'], row['poses_description'], os.path.join(backbones.work_dir, "resfiles")), axis=1)
+            cm_options =  f"-parser:protocol {os.path.abspath(os.path.join(args.riff_diff_dir, 'utils', 'coupled_moves.xml'))} -coupled_moves:ligand_mode true -coupled_moves:ligand_weight 2 -beta -ignore_zero_occupancy false -flip_HNQ true"
+            if params:
+                cm_options = cm_options + f" -extra_res_fa {' '.join(params)}"
+            backbones.df["cm_pose_opts"] = backbones.df.apply(lambda row: write_cm_opts(row["fixed_residues"], row["motif_residues"], row["updated_reference_frags_location"], args.variants_cm_design_shell, row['cm_resfile']), axis=1)
+            # coupled moves outputs in current directory --> change to another one, this is problematic when restarting runs
+            original_dir = os.getcwd()
+            cm_dir = os.path.join(backbones.work_dir, "coupled_moves")
+            os.makedirs(cm_dir := os.path.join(backbones.work_dir, "coupled_moves"), exist_ok=True)
+            os.chdir(cm_dir)
+            pre_cm_poses = copy.deepcopy(backbones)
 
-        # optimize sequences
-        backbones = ligand_mpnn.run(
-            poses = backbones,
-            prefix = f"variants_mpnn",
-            nseq = args.variants_mpnn_sequences,
-            model_type = "ligand_mpnn",
-            options = ligandmpnn_options,
-            pose_options = "variants_pose_opts" if args.variants_mutations_csv or args.variants_activate_conservation_bias else None,
-            fixed_res_col = "fixed_residues"
-        )
+            if not os.path.isfile(cm_results_file := os.path.abspath(os.path.join(cm_dir, "coupled_moves_rosetta_scores.json"))):
+                rosetta.run(
+                    poses=backbones,
+                    prefix="coupled_moves",
+                    rosetta_application="rosetta_scripts.default.linuxgccrelease",
+                    nstruct=50,
+                    options=cm_options,
+                    pose_options="cm_pose_opts")
+                
+            os.chdir(original_dir)
+            os.makedirs(cm_results_dir := os.path.join(backbones.work_dir, "cm_results"), exist_ok=True)
+            backbones = pre_cm_poses
+        
+            backbones.df = create_coupled_moves_sequences(cm_results_dir, cm_dir, backbones.df, args.variants_cm_occurence_cutoff)
+
+        else:
+            if args.variants_activate_conservation_bias:
+                # write distance conservation bias cmds
+                shell_distances = [float(i) for i in args.variants_shell_distances.split(",")]
+                shell_biases = [float(i) for i in args.variants_shell_biases.split(",")]
+                protflow.tools.ligandmpnn.create_distance_conservation_bias_cmds(poses=backbones, prefix="conservation_bias", center="ligand_motif", shell_distances=shell_distances, shell_biases=shell_biases, jobstarter=small_cpu_jobstarter)
+                ligandmpnn_options = ligandmpnn_options + f" --temperature {args.variants_bias_mpnn_temp}"
+                # combine with previous pose opts:
+                if args.variants_mutations_csv:
+                    backbones.df["variants_pose_opts"] = backbones.df.apply(lambda row: (row['variants_pose_opts'] or '') + ' ' + (row['conservation_bias']),
+        axis=1
+    )
+                else:
+                    backbones.df["variants_pose_opts"] = backbones.df["conservation_bias"]
+
+            # optimize sequences
+            backbones = ligand_mpnn.run(
+                poses = backbones,
+                prefix = f"variants_mpnn",
+                nseq = args.variants_mpnn_sequences,
+                model_type = "ligand_mpnn",
+                options = ligandmpnn_options,
+                pose_options = "variants_pose_opts" if args.variants_mutations_csv or args.variants_activate_conservation_bias else None,
+                fixed_res_col = "fixed_residues"
+            )
 
         # predict structures using ESMFold
         backbones = esmfold.run(
             poses = backbones,
             prefix = f"variants_esm",
         )
+
+        # TODO: no idea why, but residue columns seem to be lost when repeating run. hope this fixes it.
+        # create residue selections
+        residue_cols = ["fixed_residues", "motif_residues", "template_motif", "template_fixedres", "ligand_motif"]
+        for res_col in residue_cols:
+            if not backbones.df[res_col].apply(lambda x: isinstance(x, ResidueSelection)).all():
+                backbones.df[res_col] = [ResidueSelection(motif, from_scorefile=True) for motif in backbones.df[res_col].to_list()]
 
         # calculate rmsds, TMscores and clashes
         backbones = catres_motif_heavy_rmsd.run(poses = backbones, prefix = f"variants_esm_catres_heavy")
@@ -1650,13 +1857,14 @@ def main(args):
         backbones.filter_poses_by_value(score_col=f"variants_esm_tm_TM_score_ref", value=0.9, operator=">=", prefix=f"variants_esm_TM_score", plot=True)
         backbones.filter_poses_by_value(score_col=f"variants_esm_catres_bb_rmsd", value=args.ref_catres_bb_rmsd_cutoff_end, operator="<=", prefix=f"variants_esm_catres_bb", plot=True)
 
-
+        """
         # repack predictions with attnpacker, if set
         if args.attnpacker_repack:
             backbones = attnpacker.run(
                 poses=backbones,
                 prefix=f"variants_packing"
             )
+        """
 
         # copy description column for merging with holo relaxed structures later
         backbones.df[f'variants_rlx_description'] = backbones.df['poses_description']
@@ -1956,6 +2164,10 @@ if __name__ == "__main__":
     argparser.add_argument("--variants_shell_biases", type=str, default="0,0.25,0.5,1", help="Conservation bias strength for each shell. 0 means no bias. Only active if variants_activate_conservation_bias is set.")
     argparser.add_argument("--variants_bias_mpnn_temp", type=float, default=0.3, help="LigandMPNN temperature for conservation bias MPNN runs. Higher means more sequence diversity. Only active if variants_activate_conservation_bias is set.")
     argparser.add_argument("--variants_mpnn_sequences", type=int, default=50, help="Number of sequences that will be generated for each input structure. All of these will be predicted with ESMFold.")
+    argparser.add_argument("--variants_run_cm", action="store_true", help="Run coupled moves protocol instead of LigandMPNN for active site optimization")
+    argparser.add_argument("--variants_cm_design_shell", type=str, default="6,8,10,12", help="Design shells for coupled moves protocol.")
+    argparser.add_argument("--variants_cm_occurence_cutoff", type=int, default=0.25, help="Cutoff for coupled moves mutations to be accepted.")
+
 
     # rfdiffusion optionals
     argparser.add_argument("--recenter", type=str, default=None, help="Point (xyz) in input pdb towards the diffusion should be recentered. example: --recenter=-13.123;34.84;2.3209")
