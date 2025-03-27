@@ -1,0 +1,59 @@
+<ROSETTASCRIPTS>
+	<SCOREFXNS>
+		<ScoreFunction name="beta" weights="beta" >
+			<Reweight scoretype="coordinate_constraint" weight="1"/>
+		</ScoreFunction>
+	</SCOREFXNS>
+	<RESIDUE_SELECTORS>
+		<Index name="catres" resnums="%%cat_res%%" />
+		<Index name="motif" resnums="%%motif_res%%" />
+		<Not name="ligand" >
+			<ResiduePropertySelector properties="CANONICAL_AA" />
+		</Not>
+		<Or name="catres_lig" selectors="catres,ligand" />
+		<Not name="all_but_motif" selector="motif" />
+		<Not name="all_but_catres" selector="catres" />
+	</RESIDUE_SELECTORS>
+	<SIMPLE_METRICS>
+	</SIMPLE_METRICS>
+	<RESIDUE_LEVEL_TASK_OPERATIONS>
+        <PreventRepackingRLT name="PreventRepacking" />
+        <RestrictToRepackingRLT name="RestrictToRepacking" />
+	</RESIDUE_LEVEL_TASK_OPERATIONS>
+	<TASKOPERATIONS>
+		<DesignRestrictions name="fix_res">
+			<Action residue_selector="catres" residue_level_operations="RestrictToRepacking"/>
+		</DesignRestrictions>
+		<LimitAromaChi2 name="arolimit" chi2max="110" chi2min="70" include_trp="true" />
+		<ExtraRotamersGeneric name="extrachi" ex1="1" ex2="1" ex1aro="1" ex2aro="1" extrachi_cutoff="0" />
+		<InitializeFromCommandline name="initialize" />
+		<IncludeCurrent name="current_rot" />
+		<DetectProteinLigandInterface name="design_shell" cut1="%%cut1%%" cut2="%%cut2%%" cut3="%%cut3%%" cut4="%%cut4%%" design="1" />
+		ProhibitSpecifiedBaseResidueTypes name="prohibit_res" base_types="%%prohibited_residues%%" selector="all_but_catres" />
+		<ReadResfile name="read_resfile" filename="%%resfilepath%%" />
+	</TASKOPERATIONS>
+	<FILTERS>
+		<SaveResfileToDisk name="resfile" task_operations="read_resfile,fix_res,design_shell" designable_only="1" />
+	</FILTERS>
+	<MOVERS>
+		<VirtualRoot name="set_virtual_root" />
+		<AddConstraints name="add_cst" >
+			<CoordinateConstraintGenerator name="set_bb_motif_constraint" residue_selector="motif" native="true" ca_only="false" align_reference="true" sd="1.0"/>
+			<CoordinateConstraintGenerator name="set_cat_res_constraint" residue_selector="catres" native="true" sidechain="true" align_reference="true" sd="0.1" />
+			<CoordinateConstraintGenerator name="set_substrate_constraint" residue_selector="ligand" native="false" sidechain="true" sd="0.1" />
+		</AddConstraints>
+		FavorSequenceProfile name="favornative" scorefxns="beta" weight="%%favor_native_weight%%" use_current="true" matrix="IDENTITY" />
+		<CoupledMovesProtocol name="coupled_moves" score_fxn_="beta" task_operations="read_resfile,fix_res,design_shell,arolimit,extrachi,initialize,current_rot" />
+	</MOVERS>
+	<APPLY_TO_POSE>
+	</APPLY_TO_POSE>
+	<PROTOCOLS>
+		#crashes when combined with coupled moves! (I think because virt_root adds a pseudoatom at last position in pose and cm needs the ligand to be in last position)
+		Add mover="set_virtual_root" />
+		<Add mover="add_cst" />
+		Add mover="favornative" />
+		<Add filter="resfile" />
+		<Add mover="coupled_moves" />
+	</PROTOCOLS>
+	<OUTPUT scorefxn="beta" />
+  /</ROSETTASCRIPTS>
