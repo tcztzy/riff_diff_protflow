@@ -78,6 +78,11 @@ def main(args):
     # compile functional amino acids from reference_files col and fixedres:
     ref_df["functional_group_cols"] = ref_df.apply(compile_catres_functional_groups, axis=1)
     enzyme_dfs = [df for i, df in ref_df.groupby("input_poses")]
+    enzyme_df_names = [name for name, df in ref_df.groupby("input_poses")]
+
+    # write out enzyme df names
+    with open(os.path.join(args.output_dir, "enzyme_names.csv"), 'w') as f:
+        f.write(",".join(enzyme_df_names))
 
     # extract trajectory C-alpha RMSDs for (37 enzymes, 2001 time-points, 20 replicates)
     ca_rmsd_data = np.empty((len(enzyme_dfs), len(enzyme_dfs[0]), 2001))
