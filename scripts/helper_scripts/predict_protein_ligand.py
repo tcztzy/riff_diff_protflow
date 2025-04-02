@@ -4,9 +4,10 @@ Predict protein ligand interactions with AF3.
 """
 # imports
 import os
+import glob
+import json
 import logging
 import argparse
-
 
 # dependencies
 import protflow
@@ -21,7 +22,7 @@ from protflow.tools.alphafold3 import AlphaFold3
 def extract_ligand_coords(pdb_file, ligand_resname, chain_id, res_id):
     parser = PDBParser(QUIET=True)
     structure = parser.get_structure('struct', pdb_file)
-    
+
     coords = []
     atom_names = []
 
@@ -102,25 +103,29 @@ def main(args):
     logging.info(f"Loaded {len(proteins)} poses from input {args.poses_path}.")
 
     # check if all ligand columns are present in poses_df
-    for ligand in args.ligand_cols:
-        if ligand not in proteins.df.columns:
-            raise KeyError(f"Ligand column {ligand} not found in poses DataFrame {args.input_poses}")
+    ligands = glob.glob(os.path.join(args.ligand_dir, "*.json"))
 
     # if input poses are in .pdb format, convert to .fa files first.
     if proteins.poses_list()[0].endswith(".pdb"):
         proteins.convert_pdb_to_fasta("pdbs_to_fasta", update_poses=True)
 
     # loop over ligands
-    for ligand in args.ligand_cols:
-        logging.info(f"Predicting structure using entity info of column {ligand}")
+    for ligand in ligands:
+        # first load in the ligand
+        logging.info(f"Reading Ligand from {ligand}")
+        with open(ligand, 'r', encoding="UTF-8") as f:
+            ligand_dict = json.load(f)
+        
+        # run af3 on ligand
+        logging.info(f"Predicting structure ligand from {ligand}")
         af3.run(
             poses=proteins,
             prefix=ligand,
             nstruct=5,
-            additional_entities=ligand,
-            col_as_input=True,
+            additional_entities=ligand_dict, # assumes file {ligand} points to correctly formatted ligand
             options="--flash_attention_implementation xla --cuda_compute_7x 1",
-            single_sequence_mode=False
+            single_sequence_mode=False,
+            user_ccd=args.custom_ccd_dir
         )
 
     logging.info(f"Prediction of {len(args.ligand_cols)} complex structures completed")
@@ -132,23 +137,17 @@ def main(args):
     # calculate Ligand RMSDs
 
 
-
-
 if __name__ == "__main__":
     # setup args
     argparser = argparse.ArgumentParser(formatter_class=argparse.ArgumentDefaultsHelpFormatter)
 
     # required options
-    argparser.add_argument("--input_poses", required=True, help="Directory that contains .fa files that should be predicted")
-    argparser.add_argument("--ligand_cols", required=True, help="Columns in input_poses DataFrame that contain ligands to be predicted with poses. example: --ligand_cols='lig1_col,lig2_col,lig3_col'")
-    argparser.add_argument("--ligand_rmsd_ref_cols", type=str, help="Columns that contain reference structures to calculate ligand RMSD for. example (where you calculate RMSD for lig1_col and lig3_col from the example of --ligand_cols): --ligand_rmsd_ref_cols='refcol_1,-,refcol_3'")
+    argparser.add_argument("--input_dir", required=True, help="Directory that contains .fa files that should be predicted")
+    argparser.add_argument("--ligand_dir", required=True, help="Columns in input_poses DataFrame that contain ligands to be predicted with poses. example: --ligand_cols='lig1_col,lig2_col,lig3_col'")
+    argparser.add_argument("--custom_ccd_dir", type=str, default=None, help="Path to directory that contains custom ccd codes.")
     argparser.add_argument("--output_dir", required=True, help="Path to directory where predicted structures shall be stored")
     argparser.add_argument("--jobstarter", type=str, default="sbatch", help="{sbatch, local} Specify which jobstarter class to use for batch downloads.")
     argparser.add_argument("--num_workers", type=int, default=10, help="Number of processes to run in parallel")
-
     arguments = argparser.parse_args()
 
     main(arguments)
-
-
-
