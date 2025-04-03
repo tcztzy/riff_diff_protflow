@@ -86,7 +86,7 @@ def main(args):
             additional_entities=ligand_dict, # assumes file {ligand} points to correctly formatted ligand
             options="--flash_attention_implementation xla --cuda_compute_7x 1",
             single_sequence_mode=False,
-            user_ccd=args.custom_ccd_dir
+            user_ccd=os.path.abspath(args.custom_ccd_dir)
         )
 
         # store poses
