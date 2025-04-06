@@ -37,9 +37,9 @@ import protflow.utils.plotting as plots
 from protflow.tools.residue_selectors import DistanceSelector
 
 
-def write_pymol_alignment_script(df:pd.DataFrame, scoreterm: str, top_n:int, path_to_script: str, ascending=True, use_original_location=False,
+def write_pymol_alignment_script(df:pd.DataFrame, scoreterm: str, top_n:int, path_to_script: str, ascending=True,
                                  ref_motif_col: str = "template_motif", target_motif_col: str = "motif_residues",
-                                 ref_catres_col: str = "template_fixedres", target_catres_col: str = "fixed_residues"
+                                 ref_catres_col: str = "template_fixedres", target_catres_col: str = "fixed_residues", placer_output: bool = False
                                  ) -> str:
     '''
     Writes .pml script for automated pymol alignment.
@@ -48,11 +48,11 @@ def write_pymol_alignment_script(df:pd.DataFrame, scoreterm: str, top_n:int, pat
     for index in df.sort_values(scoreterm, ascending=ascending).head(top_n).index:
         cmd = write_align_cmds(
             input_data=df.loc[index],
-            use_original_location=use_original_location,
             ref_motif_col=ref_motif_col,
             target_motif_col=target_motif_col,
             ref_catres_col=ref_catres_col,
-            target_catres_col=target_catres_col
+            target_catres_col=target_catres_col,
+            placer_output=placer_output
         )
         cmds.append(cmd)
 
@@ -1703,20 +1703,23 @@ def main(args):
         
         backbones.set_work_dir(variants_work_dir := os.path.join(args.working_dir, f"{variants_prefix}variants"))
 
-        if args.variants_drop_previous_results:
-            backbones.df.drop([col for col in backbones.df.columns if col.startswith("variants")], axis=1, inplace=True)
+        # drop all columns containing information about variant runs (to be able to create variants from previous ones)
+        if len(var_cols := [col for col in backbones.df.columns if col.startswith("variants")]) > 0:
+            backbones.df.drop(var_cols, axis=1, inplace=True)
+        
 
         if args.variants_mutations_csv:
             mutations = pd.read_csv(args.variants_mutations_csv)
             mutations.replace({np.nan: None}, inplace=True)
+            mutations.rename({"omit_AAs": "variants_omit_AAs", "allow_AAs": "variants_omit_AAs"})
             backbones.df = backbones.df.merge(mutations, on="poses_description", how="right")
             backbones.df.reset_index(drop=True, inplace=True)
             mutations_dir = os.path.join(backbones.work_dir, "mutations")
             os.makedirs(mutations_dir, exist_ok=True)
-            backbones.df["variants_pose_opts"] = backbones.df.apply(lambda row: omit_AAs(row['omit_AAs'], row['allow_AAs'], mutations_dir, row["poses_description"]), axis=1)
+            backbones.df["variants_pose_opts"] = backbones.df.apply(lambda row: omit_AAs(row['variants_omit_AAs'], row['variants_omit_AAs'], mutations_dir, row["poses_description"]), axis=1)
         else:
-            backbones.df["omit_AAs"] = None
-            backbones.df["allow_AAs"] = None
+            backbones.df["variants_omit_AAs"] = None
+            backbones.df["variants_omit_AAs"] = None
 
         if args.variants_input_poses_per_bb:
             backbones.filter_poses_by_rank(n=args.variants_input_poses_per_bb, score_col="eval_composite_score", remove_layers=1)
