@@ -93,7 +93,7 @@ def write_align_cmds(input_data: pd.Series, ref_motif_col: str = "template_motif
     if placer_output:
         placer = input_data["poses_description"] + "_PLACER.pdb"
         placer_pose_name = input_data['poses_description'] + "_PLACER"
-        cmds.append(f"load {placer}", placer_pose_name)
+        cmds.append(f"load {placer}, {placer_pose_name}")
         cmds.append(f"color deepsalmon, {placer_pose_name}")
         cmds.append(f"select temp_placercat_res, {write_pymol_motif_selection(placer_pose_name, input_data[target_catres_col])}")
         cmds.append(f"show sticks, temp_placercat_res")
@@ -107,7 +107,8 @@ def write_align_cmds(input_data: pd.Series, ref_motif_col: str = "template_motif
     cmds.append(f"scene {input_data['poses_description']}, store")
     cmds.append(f"disable {input_data['poses_description']}")
     cmds.append(f"disable {ref_pose_name}")
-    cmds.append(f"disable {placer_pose_name}")
+    if placer_output:
+        cmds.append(f"disable {placer_pose_name}")
     cmds.append(f"delete temp_cat_res")
     cmds.append(f"delete temp_refcat_res")
     cmds.append(f"delete temp_motif_res")
@@ -716,8 +717,10 @@ def sort_and_combine_placer_df(df: pd.DataFrame, group_name, out_dir, path_col, 
     df_top = df_sorted.head(max(1, round(len(df_sorted) * fraction)))
 
     out_structure = Structure.Structure("combined")
-    for path in df_top[path_col]:
-        out_structure.add(load_structure_from_pdbfile(path))
+    for i, path in enumerate(df_top[path_col].to_list()):
+        model = load_structure_from_pdbfile(path)
+        model.id = i
+        out_structure.add(model)
 
     out_path = os.path.join(out_dir, f"{group_name}_combined.pdb")
     save_structure_to_pdbfile(out_structure, out_path) 
