@@ -193,7 +193,7 @@ def create_results_dir(poses: Poses, dir: str, score_col: str, plot_cols: list =
     # copy top 10 placer outputs
     if placer_path_col:
         for _, row in poses.df.iterrows():
-            shutil.copy(row[placer_path_col], os.path.join(dir, f"{row["poses_description"]}_PLACER.pdb"))
+            shutil.copy(row[placer_path_col], os.path.join(dir, f"{row['poses_description']}_PLACER.pdb"))
     poses.save_scores(out_path=dir)
 
     # write pymol alignment script
@@ -1872,7 +1872,7 @@ def main(args):
         )
 
         # calculate total number of hbonds to ligand
-        analysis.df[f"variants_esm_placer_hbonds"] = analysis.df[[col for col in analysis.df.columns if col.startswith(f"variants_esm__hbonds_target_hbonds")]].sum(axis=1)
+        analysis.df[f"variants_esm_placer_hbonds"] = analysis.df[[col for col in analysis.df.columns if col.startswith(f"variants_esm_hbonds_target_hbonds")]].sum(axis=1)
 
         # calculate weighted scores
         for score in ["variants_esm_placer_rmsd", "variants_esm_placer_kabsch", "variants_esm_placer_hbonds", "variants_esm_placer_catres_heavy_rmsd"]:
