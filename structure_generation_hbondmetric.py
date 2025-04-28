@@ -136,10 +136,10 @@ def instantiate_trajectory_plotting(plot_dir, df):
     fastrelax_total_score_traj = plots.PlottingTrajectory(y_label="Rosetta total score [REU]", location=os.path.join(plot_dir, "trajectory_rosetta_total_score.png"), title="FastRelax Total Score Trajectory")
     postrelax_motif_ca_rmsd_traj = plots.PlottingTrajectory(y_label="RMSD [\u00C5]", location=os.path.join(plot_dir, "trajectory_postrelax_fixedres_rmsd.png"), title="Postrelax Fixed Residues\nCa RMSD Trajectory", dims=(0,5))
     postrelax_motif_catres_rmsd_traj = plots.PlottingTrajectory(y_label="RMSD [\u00C5]", location=os.path.join(plot_dir, "trajectory_postrelax_fixedres_catres.png"), title="Postrelax Fixed Residues\nSidechain RMSD Trajectory", dims=(0,5))
-    delta_apo_holo_traj = plots.PlottingTrajectory(y_label="Rosetta delta total score [REU]", location=os.path.join(plot_dir, "trajectory_delta_apo_holo.png"), title="Delta Apo Holo Total Score Trajectory")
+    #delta_apo_holo_traj = plots.PlottingTrajectory(y_label="Rosetta delta total score [REU]", location=os.path.join(plot_dir, "trajectory_delta_apo_holo.png"), title="Delta Apo Holo Total Score Trajectory")
     postrelax_ligand_rmsd_traj = plots.PlottingTrajectory(y_label="RMSD [\u00C5]", location=os.path.join(plot_dir, "trajectory_postrelax_ligand_rmsd.png"), title="Postrelax Ligand\nRMSD Trajectory", dims=(0,5))
     sap_score_traj = plots.PlottingTrajectory(y_label="Spatial Aggregation Propensity", location=os.path.join(plot_dir, "trajectory_sap_score.png"), title="SAP Score Trajectory", dims=(0,250))
-    return {'esm_plddt': esm_plddt_traj, 'esm_backbone_rmsd': esm_bb_ca_rmsd_traj, 'esm_catres_bb_rmsd': esm_motif_ca_rmsd_traj, 'esm_catres_heavy_rmsd': esm_catres_rmsd_traj, 'fastrelax_total_score': fastrelax_total_score_traj, 'postrelax_catres_heavy_rmsd': postrelax_motif_catres_rmsd_traj, 'postrelax_catres_bb_rmsd': postrelax_motif_ca_rmsd_traj, 'delta_apo_holo': delta_apo_holo_traj, 'postrelax_ligand_rmsd': postrelax_ligand_rmsd_traj, 'fastrelax_sap_score_mean': sap_score_traj}
+    return {'esm_plddt': esm_plddt_traj, 'esm_backbone_rmsd': esm_bb_ca_rmsd_traj, 'esm_catres_bb_rmsd': esm_motif_ca_rmsd_traj, 'esm_catres_heavy_rmsd': esm_catres_rmsd_traj, 'fastrelax_total_score': fastrelax_total_score_traj, 'postrelax_catres_heavy_rmsd': postrelax_motif_catres_rmsd_traj, 'postrelax_catres_bb_rmsd': postrelax_motif_ca_rmsd_traj, 'postrelax_ligand_rmsd': postrelax_ligand_rmsd_traj, 'fastrelax_sap_score_mean': sap_score_traj}
 
 def update_trajectory_plotting(trajectory_plots:dict, df:pd.DataFrame, cycle:int):
     for traj in trajectory_plots:
@@ -154,7 +154,7 @@ def add_final_data_to_trajectory_plots(df: pd.DataFrame, trajectory_plots):
     trajectory_plots['fastrelax_total_score'].add_and_plot(df['final_fastrelax_total_score'], "eval (AF2)")
     trajectory_plots['postrelax_catres_heavy_rmsd'].add_and_plot(df['final_postrelax_catres_heavy_rmsd'], "eval (AF2)")
     trajectory_plots['postrelax_catres_bb_rmsd'].add_and_plot(df['final_postrelax_catres_bb_rmsd'], "eval (AF2)")
-    trajectory_plots['delta_apo_holo'].add_and_plot(df['final_delta_apo_holo'], "eval (AF2)")
+    #trajectory_plots['delta_apo_holo'].add_and_plot(df['final_delta_apo_holo'], "eval (AF2)")
     trajectory_plots['postrelax_ligand_rmsd'].add_and_plot(df['final_postrelax_ligand_rmsd'], "eval (AF2)")
     trajectory_plots['fastrelax_sap_score_mean'].add_and_plot(df['final_fastrelax_sap_score_mean'], "eval (AF2)")
     return trajectory_plots
@@ -864,6 +864,7 @@ def main(args):
 
     bb_opt_options = f"-parser:protocol {os.path.abspath(os.path.join(args.riff_diff_dir, 'utils', 'fr_constrained.xml'))} -beta -ignore_zero_occupancy false -flip_HNQ true -use_input_sc true"
     fr_options = f"-parser:protocol {os.path.abspath(os.path.join(protflow.config.AUXILIARY_RUNNER_SCRIPTS_DIR, 'fastrelax_sap.xml'))} -beta -ignore_zero_occupancy false -flip_HNQ true -use_input_sc true"
+    fr_options_holo = f"-parser:protocol {os.path.abspath(os.path.join(args.riff_diff_dir, 'utils', 'fastrelax.xml'))} -beta -ignore_zero_occupancy false -flip_HNQ true -use_input_sc true -parser:script_vars motif_res=substrate_chain=Z"
 
     if params:
         fr_options = fr_options + f" -extra_res_fa {' '.join(params)}"
@@ -1011,7 +1012,7 @@ def main(args):
             logging.info(f"Calculating Ligand Statistics")
             backbones = ligand_clash.run(poses=backbones, prefix="rfdiffusion_ligand")
             backbones = ligand_contacts.run(poses=backbones, prefix="rfdiffusion_lig")
-            backbones.df = calculate_contact_score(df=backbones.df, contact_col="rfdiffusion_lig_contacts", score_col="rfdiffusion_contacts_score", target_value=9)
+            backbones.df = calculate_contact_score(df=backbones.df, contact_col="rfdiffusion_lig_contacts", score_col="rfdiffusion_contacts_score", target_value=args.contacts_target_value)
 
             # plot rfdiffusion_stats
             results_dir = os.path.join(backbones.work_dir, "results")
@@ -1031,8 +1032,8 @@ def main(args):
                 backbones.filter_poses_by_value(score_col="rfdiffusion_ligand_clashes", value=args.rfdiffusion_max_clashes, operator="<=", prefix="rfdiffusion_ligand_clashes", plot=True)
             if args.rfdiffusion_max_rog:
                 backbones.filter_poses_by_value(score_col="rfdiffusion_rog_data", value=args.rfdiffusion_max_rog, operator="<=", prefix="rfdiffusion_rog", plot=True)
-            if args.rfdiffusion_min_ligand_contacts:
-                backbones.filter_poses_by_value(score_col="rfdiffusion_lig_contacts", value=args.rfdiffusion_min_ligand_contacts, operator=">=", prefix="rfdiffusion_lig_contacts", plot=True)
+            if args.min_contacts:
+                backbones.filter_poses_by_value(score_col="rfdiffusion_lig_contacts", value=args.min_contacts, operator=">=", prefix="rfdiffusion_lig_contacts", plot=True)
             if args.rfdiffusion_catres_bb_rmsd:
                 backbones.filter_poses_by_value(score_col="rfdiffusion_catres_rmsd", value=args.rfdiffusion_catres_bb_rmsd, operator="<=", prefix="rfdiffusion_catres_bb_rmsd", plot=True)
             if args.rfdiffusion_motif_bb_rmsd:
@@ -1170,7 +1171,9 @@ def main(args):
 
             backbones = ligand_clash.run(poses=backbones, prefix="esm_ligand")
             backbones = ligand_contacts.run(poses=backbones, prefix="esm_lig")
-            backbones.df = calculate_contact_score(df=backbones.df, contact_col="esm_lig_contacts", score_col="esm_contacts_score", target_value=9)
+            backbones.df = calculate_contact_score(df=backbones.df, contact_col="esm_lig_contacts", score_col="esm_contacts_score", target_value=args.contacts_target_value)
+
+            backbones.filter_poses_by_value(score_col="esm_lig_contacts", value=args.min_contacts, operator=">=", prefix="esm_lig_contacts", plot=True)
 
 
             # calculate multi-scorerterm score for the final backbone filter:
@@ -1413,30 +1416,6 @@ def main(args):
                     prefix=f"cycle_{cycle}_packing"
                 )
 
-            # copy description column for merging with holo relaxed structures later
-            backbones.df[f'cycle_{cycle}_rlx_description'] = backbones.df['poses_description']
-            apo_backbones = copy.deepcopy(backbones)
-
-            # relax apo poses
-            logging.info("Relaxing poses without ligand present...")
-            apo_backbones = rosetta.run(
-                poses = apo_backbones,
-                prefix = f"cycle_{cycle}_fastrelax_apo",
-                rosetta_application="rosetta_scripts.default.linuxgccrelease",
-                nstruct = 3,
-                options = fr_options
-            )
-
-            apo_backbones = catres_motif_heavy_rmsd.run(poses = apo_backbones, prefix = f"cycle_{cycle}_postrelax_apo_catres_heavy")
-            apo_backbones = catres_motif_bb_rmsd.run(poses = apo_backbones, prefix = f"cycle_{cycle}_postrelax_apo_catres_bb")
-            apo_backbones= calculate_mean_scores(poses=apo_backbones, scores=[f"cycle_{cycle}_postrelax_apo_catres_heavy_rmsd", f"cycle_{cycle}_postrelax_apo_catres_bb_rmsd"],  remove_layers=1)
-
-            # filter for top relaxed apo pose and merge with original dataframe
-            logging.info("Selecting top poses for each relaxed structure...")
-            apo_backbones.filter_poses_by_rank(n=1, score_col=f"cycle_{cycle}_fastrelax_apo_total_score", remove_layers=1)
-            preserve_cols = [f'cycle_{cycle}_rlx_description', f"cycle_{cycle}_fastrelax_apo_total_score", f"cycle_{cycle}_postrelax_apo_catres_heavy_rmsd", f"cycle_{cycle}_postrelax_apo_catres_heavy_rmsd_mean", f"cycle_{cycle}_postrelax_apo_catres_bb_rmsd", f"cycle_{cycle}_postrelax_apo_catres_bb_rmsd_mean"]
-            backbones.df = backbones.df.merge(apo_backbones.df[preserve_cols], on=f'cycle_{cycle}_rlx_description')
-
             # add ligand to poses
             logging.info("Adding ligand to ESMFold predictions...")
             backbones = chain_adder.superimpose_add_chain(
@@ -1446,6 +1425,14 @@ def main(args):
                 target_motif = "fixed_residues",
                 copy_chain = "Z"
             )
+
+            # calculate ligand clashes and ligand contacts
+            backbones = ligand_clash.run(poses=backbones, prefix=f"cycle_{cycle}_esm_ligand")
+            backbones = ligand_contacts.run(poses=backbones, prefix=f"cycle_{cycle}_esm_lig")
+            backbones.df = calculate_contact_score(df=backbones.df, contact_col=f"cycle_{cycle}_esm_lig_contacts", score_col=f"cycle_{cycle}_esm_contacts_score", target_value=args.contacts_target_value)
+
+            backbones.filter_poses_by_value(score_col=f"cycle_{cycle}_esm_lig_contacts", value=args.min_contacts, operator=">=", prefix=f"cycle_{cycle}_esm_lig_contacts", plot=True)
+
 
             # add covalent bonds info to poses pre-relax
             backbones = add_covalent_bonds_info(poses=backbones, prefix=f"cycle_{cycle}_fastrelax_cov_info", covalent_bonds_col="covalent_bonds")
@@ -1457,15 +1444,19 @@ def main(args):
                 prefix = f"cycle_{cycle}_fastrelax",
                 rosetta_application="rosetta_scripts.default.linuxgccrelease",
                 nstruct = 3,
-                options = fr_options
+                options = fr_options_holo
             )
+
+            # calculate total number of hbonds to ligand
+            backbones.df[f"cycle_{cycle}_fastrelax_hbonds_pre"] = backbones.df[[col for col in backbones.df.columns if col.startswith(f"cycle_{cycle}_fastrelax_pre_hbonds")]].sum(axis=1)
+            backbones.df[f"cycle_{cycle}_fastrelax_hbonds_post"] = backbones.df[[col for col in backbones.df.columns if col.startswith(f"cycle_{cycle}_fastrelax_post_hbonds")]].sum(axis=1)
 
             # calculate RMSD on relaxed poses
             logging.info(f"Calculating RMSD of catalytic residues and ligand for relaxed poses...")
             backbones = catres_motif_heavy_rmsd.run(poses = backbones, prefix = f"cycle_{cycle}_postrelax_catres_heavy")
             backbones = catres_motif_bb_rmsd.run(poses = backbones, prefix = f"cycle_{cycle}_postrelax_catres_bb")
             backbones = ligand_rmsd.run(poses = backbones, prefix = f"cycle_{cycle}_postrelax_ligand")
-            backbones = calculate_mean_scores(poses=backbones, scores=[f"cycle_{cycle}_postrelax_catres_heavy_rmsd", f"cycle_{cycle}_postrelax_catres_bb_rmsd", f"cycle_{cycle}_postrelax_ligand_rmsd", f"cycle_{cycle}_fastrelax_sap_score"], remove_layers=1)
+            backbones = calculate_mean_scores(poses=backbones, scores=[f"cycle_{cycle}_postrelax_catres_heavy_rmsd", f"cycle_{cycle}_postrelax_catres_bb_rmsd", f"cycle_{cycle}_postrelax_ligand_rmsd", f"cycle_{cycle}_fastrelax_sap_score", f"cycle_{cycle}_fastrelax_hbonds_pre", f"cycle_{cycle}_fastrelax_hbonds_post"], remove_layers=1)
 
             # filter backbones down to relax input backbones
             backbones.filter_poses_by_rank(n=1, score_col=f"cycle_{cycle}_fastrelax_total_score", remove_layers=1)
@@ -1476,14 +1467,10 @@ def main(args):
             logging.info("Removing poses with ligand rmsd above cutoff...")
             backbones.filter_poses_by_value(score_col=f"cycle_{cycle}_postrelax_ligand_rmsd", value=ligand_rmsd_cutoff, operator="<=", prefix=f"cycle_{cycle}_ligand_rmsd", plot=True)        
 
-            # calculate delta apo holo score
-            logging.info("Calculating delta total score between relaxed poses with and without ligand present...")
-            backbones.df[f'cycle_{cycle}_delta_apo_holo'] = backbones.df[f"cycle_{cycle}_fastrelax_total_score"] - backbones.df[f"cycle_{cycle}_fastrelax_apo_total_score"]
-
             # calculate multi-scoreterm score for the final backbone filter:
             logging.info("Calculating composite score for refinement evaluation...")
-            ref_comp_scoreterms = [f"cycle_{cycle}_esm_plddt", f"cycle_{cycle}_esm_tm_TM_score_ref", f"cycle_{cycle}_esm_catres_bb_rmsd", f"cycle_{cycle}_esm_catres_heavy_rmsd", f"cycle_{cycle}_motif_rmsd", f"cycle_{cycle}_delta_apo_holo", f"cycle_{cycle}_postrelax_ligand_rmsd", f"cycle_{cycle}_postrelax_catres_heavy_rmsd", f"cycle_{cycle}_fastrelax_sap_score_mean", f"cycle_{cycle}_postrelax_apo_catres_heavy_rmsd"]
-            ref_comp_weights = [-2, -2, 8, 4, 2, 2, 2, 2, 1, 2]
+            ref_comp_scoreterms = [f"cycle_{cycle}_esm_plddt", f"cycle_{cycle}_esm_tm_TM_score_ref", f"cycle_{cycle}_esm_catres_bb_rmsd", f"cycle_{cycle}_esm_catres_heavy_rmsd", f"cycle_{cycle}_motif_rmsd", f"cycle_{cycle}_postrelax_ligand_rmsd", f"cycle_{cycle}_postrelax_catres_heavy_rmsd", f"cycle_{cycle}_fastrelax_sap_score_mean", f"cycle_{cycle}_fastrelax_hbonds_pre_mean", f"cycle_{cycle}_fastrelax_hbonds_post_mean", f"cycle_{cycle}_esm_contacts_score"]
+            ref_comp_weights = [-2, -2, 8, 4, 2, 2, 2, 1, -2, -2, 2]
             backbones.calculate_composite_score(
                 name=f"cycle_{cycle}_refinement_composite_score",
                 scoreterms=ref_comp_scoreterms,
@@ -1509,7 +1496,7 @@ def main(args):
                 score_col=f"cycle_{cycle}_refinement_composite_score",
                 prefix=f"cycle_{cycle}_refinement_composite_score",
                 plot=True,
-                plot_cols=[f"cycle_{cycle}_esm_plddt", f"cycle_{cycle}_esm_tm_TM_score_ref", f"cycle_{cycle}_esm_catres_bb_rmsd", f"cycle_{cycle}_esm_catres_heavy_rmsd", f"cycle_{cycle}_delta_apo_holo", f"cycle_{cycle}_postrelax_ligand_rmsd", f"cycle_{cycle}_postrelax_catres_heavy_rmsd", f"cycle_{cycle}_fastrelax_sap_score_mean", f"cycle_{cycle}_postrelax_apo_catres_heavy_rmsd"],
+                plot_cols=ref_comp_scoreterms,
                 remove_layers=1
             )
 
@@ -1638,7 +1625,9 @@ def main(args):
         # calculate ligand clashes and ligand contacts
         backbones = ligand_clash.run(poses=backbones, prefix="final_AF2_ligand")
         backbones = ligand_contacts.run(poses=backbones, prefix="final_AF2_lig")
-        backbones.df = calculate_contact_score(df=backbones.df, contact_col="final_AF2_lig_contacts", score_col="final_AF2_contacts_score", target_value=9)
+        backbones.df = calculate_contact_score(df=backbones.df, contact_col="final_AF2_lig_contacts", score_col="final_AF2_contacts_score", target_value=args.contacts_target_value)
+
+        backbones.filter_poses_by_value(score_col="final_AF2_lig_contacts", value=args.min_contacts, operator=">=", prefix="final_AF2_lig_contacts", plot=True)
 
 
         # add covalent bonds info to poses pre-relax
@@ -1650,8 +1639,12 @@ def main(args):
             prefix = "final_fastrelax",
             rosetta_application="rosetta_scripts.default.linuxgccrelease",
             nstruct = 10,
-            options = fr_options
+            options = fr_options_holo
         )
+
+        # calculate total number of hbonds to ligand
+        backbones.df[f"final_fastrelax_hbonds_pre"] = backbones.df[[col for col in backbones.df.columns if col.startswith(f"final_fastrelax_pre_hbonds")]].sum(axis=1)
+        backbones.df[f"final_fastrelax_hbonds_post"] = backbones.df[[col for col in backbones.df.columns if col.startswith(f"final_fastrelax_post_hbonds")]].sum(axis=1)
 
         # calculate RMSDs of relaxed poses
         backbones = catres_motif_heavy_rmsd.run(poses = backbones, prefix = f"final_postrelax_catres_heavy")
@@ -1659,7 +1652,8 @@ def main(args):
         backbones = ligand_rmsd.run(poses = backbones, prefix = "final_postrelax_ligand")
 
         # average values for all relaxed poses
-        backbones = calculate_mean_scores(poses=backbones, scores=["final_postrelax_catres_heavy_rmsd", "final_postrelax_catres_bb_rmsd", "final_postrelax_ligand_rmsd", "final_fastrelax_sap_score"], remove_layers=1)        
+        backbones = calculate_mean_scores(poses=backbones, scores=["final_postrelax_catres_heavy_rmsd", "final_postrelax_catres_bb_rmsd", "final_postrelax_ligand_rmsd", "final_fastrelax_sap_score", f"final_fastrelax_hbonds_pre", f"final_fastrelax_hbonds_post"], remove_layers=1)
+        
         # filter to relaxed pose with best score
         backbones.filter_poses_by_rank(n=1, score_col="final_fastrelax_total_score", remove_layers=1)
 
@@ -1692,17 +1686,17 @@ def main(args):
         # calculate final composite score
         backbones.calculate_composite_score(
             name=f"final_composite_score",
-            scoreterms=["final_AF2_plddt", "final_AF2_tm_TM_score_ref", "final_AF2_catres_bb_rmsd", "final_AF2_catres_heavy_rmsd", "final_delta_apo_holo", "final_postrelax_ligand_rmsd", "final_postrelax_catres_heavy_rmsd", "final_fastrelax_sap_score_mean", "final_postrelax_apo_catres_heavy_rmsd"],
-            weights=[-2, -2, 8, 4, 2, 2, 2, 1, 2],
+            scoreterms=["final_AF2_plddt", "final_AF2_tm_TM_score_ref", "final_AF2_catres_bb_rmsd", "final_AF2_catres_heavy_rmsd", "final_delta_apo_holo", "final_postrelax_ligand_rmsd", "final_postrelax_catres_heavy_rmsd", "final_fastrelax_sap_score_mean", f"final_fastrelax_hbonds_pre_mean", f"final_fastrelax_hbonds_post_mean", "final_AF2_contacts_score"],
+            weights=[-2, -2, 8, 4, 2, 2, 2, 1, -2, -2, 2],
             plot=True
         )
     
         # plot mean results
         plots.violinplot_multiple_cols(
             dataframe=backbones.df,
-            cols=["final_AF2_catres_heavy_rmsd_mean", "final_AF2_catres_bb_rmsd_mean", "final_postrelax_catres_heavy_rmsd_mean", "final_postrelax_catres_bb_rmsd_mean", "final_postrelax_ligand_rmsd_mean", "final_postrelax_apo_catres_heavy_rmsd_mean", "final_fastrelax_sap_score_mean"],
-            y_labels=["Angstrom", "Angstrom", "Angstrom", "Angstrom", "Angstrom", "Angstrom", "SAP score"],
-            titles=["Mean AF2\nSidechain RMSD", "Mean AF2 catres\nBB RMSD", "Mean Relaxed\nSidechain RMSD", "Mean Relaxed catres\nBB RMSD", "Mean Relaxed ligand\nRMSD", "Mean Apo Relaxed\nSidechain RMSD", "Spatial Aggregation Propensity"],
+            cols=["final_AF2_catres_heavy_rmsd_mean", "final_AF2_catres_bb_rmsd_mean", "final_postrelax_catres_heavy_rmsd_mean", "final_postrelax_catres_bb_rmsd_mean", "final_postrelax_ligand_rmsd_mean", "final_postrelax_apo_catres_heavy_rmsd_mean", "final_fastrelax_sap_score_mean", "final_AF2_lig_contacts"],
+            y_labels=["Angstrom", "Angstrom", "Angstrom", "Angstrom", "Angstrom", "Angstrom", "SAP score", "# contacts"],
+            titles=["Mean AF2\nSidechain RMSD", "Mean AF2 catres\nBB RMSD", "Mean Relaxed\nSidechain RMSD", "Mean Relaxed catres\nBB RMSD", "Mean Relaxed ligand\nRMSD", "Mean Apo Relaxed\nSidechain RMSD", "Spatial Aggregation Propensity", "ligand contacts"],
             out_path=os.path.join(backbones.plots_dir, "final_mean_rmsds.png"),
             show_fig=False
         )
@@ -1847,6 +1841,13 @@ def main(args):
             if not backbones.df[res_col].apply(lambda x: isinstance(x, ResidueSelection)).all():
                 backbones.df[res_col] = [ResidueSelection(motif, from_scorefile=True) for motif in backbones.df[res_col].to_list()]
 
+        # calculate ligand clashes and ligand contacts
+        backbones = ligand_clash.run(poses=backbones, prefix="variants_ligand")
+        backbones = ligand_contacts.run(poses=backbones, prefix="variants_lig")
+        backbones.df = calculate_contact_score(df=backbones.df, contact_col="variants_lig_contacts", score_col="variants_contacts_score", target_value=args.contacts_target_value)
+
+        backbones.filter_poses_by_value(score_col="variants_lig_contacts", value=args.min_contacts, operator=">=", prefix="variants_lig_contacts", plot=True)
+
         # calculate rmsds, TMscores and clashes
         backbones = catres_motif_heavy_rmsd.run(poses = backbones, prefix = f"variants_esm_catres_heavy")
         backbones = catres_motif_bb_rmsd.run(poses = backbones, prefix = f"variants_esm_catres_bb")
@@ -1870,24 +1871,6 @@ def main(args):
         backbones.df[f'variants_rlx_description'] = backbones.df['poses_description']
         apo_backbones = copy.deepcopy(backbones)
 
-        # relax apo poses
-        apo_backbones = rosetta.run(
-            poses = apo_backbones,
-            prefix = f"variants_fastrelax_apo",
-            rosetta_application="rosetta_scripts.default.linuxgccrelease",
-            nstruct = 3,
-            options = fr_options
-        )
-
-        apo_backbones = catres_motif_heavy_rmsd.run(poses = apo_backbones, prefix = f"variants_postrelax_apo_catres_heavy")
-        apo_backbones = catres_motif_bb_rmsd.run(poses = apo_backbones, prefix = f"variants_postrelax_apo_catres_bb")
-        apo_backbones= calculate_mean_scores(poses=apo_backbones, scores=[f"variants_postrelax_apo_catres_heavy_rmsd", f"variants_postrelax_apo_catres_bb_rmsd"],  remove_layers=1)
-
-        # filter for top relaxed apo pose and merge with original dataframe
-        apo_backbones.filter_poses_by_rank(n=1, score_col="variants_fastrelax_apo_total_score", remove_layers=1)
-        preserve_cols = [f'variants_rlx_description', f"variants_fastrelax_apo_total_score", f"variants_postrelax_apo_catres_heavy_rmsd", f"variants_postrelax_apo_catres_heavy_rmsd_mean", f"variants_postrelax_apo_catres_bb_rmsd", f"variants_postrelax_apo_catres_bb_rmsd_mean"]
-        backbones.df = backbones.df.merge(apo_backbones.df[preserve_cols], on='variants_rlx_description')
-
         # add ligand to poses
         backbones = chain_adder.superimpose_add_chain(
             poses = backbones,
@@ -1906,18 +1889,19 @@ def main(args):
             prefix = f"variants_fastrelax",
             rosetta_application="rosetta_scripts.default.linuxgccrelease",
             nstruct = 3,
-            options = fr_options
+            options = fr_options_holo
         )
 
-        # calculate delta apo holo score
-        backbones.df[f'variants_delta_apo_holo'] = backbones.df[f"variants_fastrelax_total_score"] - backbones.df[f"variants_fastrelax_apo_total_score"]
+        # calculate total number of hbonds to ligand
+        backbones.df[f"variants_fastrelax_hbonds_pre"] = backbones.df[[col for col in backbones.df.columns if col.startswith(f"variants_fastrelax_pre_hbonds")]].sum(axis=1)
+        backbones.df[f"variants_fastrelax_hbonds_post"] = backbones.df[[col for col in backbones.df.columns if col.startswith(f"fvariants_fastrelax_post_hbonds")]].sum(axis=1)
 
         # calculate RMSD on relaxed poses
         logging.info(f"Relax finished. Now calculating RMSD of catalytic residues for {len(backbones)} structures.")
         backbones = catres_motif_heavy_rmsd.run(poses = backbones, prefix = "variants_postrelax_catres_heavy")
         backbones = catres_motif_bb_rmsd.run(poses = backbones, prefix = "variants_postrelax_catres_bb")
         backbones = ligand_rmsd.run(poses = backbones, prefix = "variants_postrelax_ligand")
-        backbones = calculate_mean_scores(poses=backbones, scores=["variants_postrelax_catres_heavy_rmsd", "variants_postrelax_catres_bb_rmsd", "variants_postrelax_ligand_rmsd", "variants_fastrelax_sap_score"], remove_layers=1)
+        backbones = calculate_mean_scores(poses=backbones, scores=["variants_postrelax_catres_heavy_rmsd", "variants_postrelax_catres_bb_rmsd", "variants_postrelax_ligand_rmsd", "variants_fastrelax_sap_score", "variants_fastrelax_hbonds_pre", "variants_fastrelax_hbonds_post"], remove_layers=1)
 
         # filter backbones down to relax input backbones
         backbones.filter_poses_by_rank(n=1, score_col="variants_fastrelax_total_score", remove_layers=1)
@@ -1928,12 +1912,11 @@ def main(args):
         # calculate multi-scoreterm score for the final backbone filter:
         backbones.calculate_composite_score(
             name="variants_composite_score",
-            scoreterms=["variants_esm_plddt", "variants_esm_tm_TM_score_ref", "variants_esm_catres_bb_rmsd", "variants_esm_catres_heavy_rmsd", "variants_delta_apo_holo", "variants_postrelax_ligand_rmsd", "variants_postrelax_catres_heavy_rmsd", "variants_fastrelax_sap_score_mean", "variants_postrelax_apo_catres_heavy_rmsd"],
-            weights=[-2, -2, 8, 4, 2, 2, 2, 1, 2],
+            scoreterms=["variants_esm_plddt", "variants_esm_tm_TM_score_ref", "variants_esm_catres_bb_rmsd", "variants_esm_catres_heavy_rmsd", "variants_postrelax_ligand_rmsd", "variants_postrelax_catres_heavy_rmsd", "variants_fastrelax_sap_score_mean", "variants_fastrelax_hbonds_pre_mean", "variants_fastrelax_hbonds_post_mean", "variants_contacts_score"],
+            weights=[-2, -2, 8, 4, 2, 2, 1, -2, -2, 2],
             plot=True
         )
         
-
         # define number of index layers that were added during variants generation
         layers = 3
         if args.attnpacker_repack: layers += 1
@@ -2008,7 +1991,9 @@ def main(args):
         # calculate ligand clashes and ligand contacts
         backbones = ligand_clash.run(poses=backbones, prefix="variants_AF2_ligand")
         backbones = ligand_contacts.run(poses=backbones, prefix="variants_AF2_lig")
-        backbones.df = calculate_contact_score(df=backbones.df, contact_col="variants_AF2_lig_contacts", score_col="variants_AF2_contacts_score", target_value=9)
+        backbones.df = calculate_contact_score(df=backbones.df, contact_col="variants_AF2_lig_contacts", score_col="variants_AF2_contacts_score", target_value=args.contacts_target_value)
+
+        backbones.filter_poses_by_value(score_col="variants_AF2_lig_contacts", value=args.min_contacts, operator=">=", prefix="variants_AF2_lig_contacts", plot=True)
 
         # add covalent bonds info to poses pre-relax
         backbones = add_covalent_bonds_info(poses=backbones, prefix="variants_AF2_fastrelax_cov_info", covalent_bonds_col="covalent_bonds")
@@ -2019,8 +2004,12 @@ def main(args):
             prefix = "variants_AF2_fastrelax",
             rosetta_application="rosetta_scripts.default.linuxgccrelease",
             nstruct = 5,
-            options = fr_options
+            options = fr_options_holo
         )
+
+        # calculate total number of hbonds to ligand
+        backbones.df["variants_AF2_fastrelax_hbonds_pre"] = backbones.df[[col for col in backbones.df.columns if col.startswith(f"fvariants_AF2_fastrelax_pre_hbonds")]].sum(axis=1)
+        backbones.df["variants_AF2_fastrelax_hbonds_post"] = backbones.df[[col for col in backbones.df.columns if col.startswith(f"variants_AF2_fastrelax_post_hbonds")]].sum(axis=1)
 
         # calculate RMSDs of relaxed poses
         backbones = catres_motif_heavy_rmsd.run(poses = backbones, prefix = f"variants_AF2_postrelax_catres_heavy")
@@ -2028,7 +2017,7 @@ def main(args):
         backbones = ligand_rmsd.run(poses = backbones, prefix = "variants_AF2_postrelax_ligand")
 
         # average values for all relaxed poses
-        backbones = calculate_mean_scores(poses=backbones, scores=["variants_AF2_postrelax_catres_heavy_rmsd", "variants_AF2_postrelax_catres_bb_rmsd", "variants_AF2_postrelax_ligand_rmsd", "variants_AF2_fastrelax_sap_score"], remove_layers=1)
+        backbones = calculate_mean_scores(poses=backbones, scores=["variants_AF2_postrelax_catres_heavy_rmsd", "variants_AF2_postrelax_catres_bb_rmsd", "variants_AF2_postrelax_ligand_rmsd", "variants_AF2_fastrelax_sap_score", "variants_AF2_fastrelax_hbonds_pre", "variants_AF2_fastrelax_hbonds_post"], remove_layers=1)
         
         # filter to relaxed pose with best score
         backbones.filter_poses_by_rank(n=1, score_col="variants_AF2_fastrelax_total_score", remove_layers=1)
@@ -2061,18 +2050,18 @@ def main(args):
         # calculate variants_AF2 composite score
         backbones.calculate_composite_score(
             name=f"variants_AF2_composite_score",
-            scoreterms=["variants_AF2_plddt", "variants_AF2_tm_TM_score_ref", "variants_AF2_catres_bb_rmsd", "variants_AF2_catres_heavy_rmsd", "variants_AF2_delta_apo_holo", "variants_AF2_postrelax_ligand_rmsd", "variants_AF2_postrelax_catres_heavy_rmsd", "variants_AF2_fastrelax_sap_score_mean", "variants_AF2_postrelax_apo_catres_heavy_rmsd"],
-            weights=[-2, -2, 8, 4, 2, 2, 2, 1, 2],
+            scoreterms=["variants_AF2_plddt", "variants_AF2_tm_TM_score_ref", "variants_AF2_catres_bb_rmsd", "variants_AF2_catres_heavy_rmsd", "variants_AF2_delta_apo_holo", "variants_AF2_postrelax_ligand_rmsd", "variants_AF2_postrelax_catres_heavy_rmsd", "variants_AF2_fastrelax_sap_score_mean", "variants_AF2_fastrelax_hbonds_pre_mean", "variants_AF2_fastrelax_hbonds_post_mean", "variants_AF2_contacts_score"],
+            weights=[-2, -2, 8, 4, 2, 2, 2, 1, -2, -2, 2],
             plot=True
         )
     
         # plot mean results
         plots.violinplot_multiple_cols(
             dataframe=backbones.df,
-            cols=["variants_AF2_catres_heavy_rmsd", "variants_AF2_catres_bb_rmsd", "variants_AF2_postrelax_catres_heavy_rmsd_mean", "variants_AF2_postrelax_catres_bb_rmsd_mean", "variants_AF2_postrelax_ligand_rmsd_mean", "variants_AF2_postrelax_apo_catres_heavy_rmsd_mean", "variants_AF2_fastrelax_sap_score_mean"],
-            y_labels=["Angstrom", "Angstrom", "Angstrom", "Angstrom", "Angstrom", "Angstrom", "SAP score"],
-            titles=["Mean AF2\nSidechain RMSD", "Mean AF2 catres\nBB RMSD", "Mean Relaxed\nSidechain RMSD", "Mean Relaxed catres\nBB RMSD", "Mean Relaxed ligand\nRMSD", "Mean Apo Relaxed\nSidechain RMSD", "Spatial Aggregation Propensity"],
-            out_path=os.path.join(backbones.plots_dir, "variants_AF2_mean_rmsds.png"),
+            cols=["variants_AF2_catres_heavy_rmsd", "variants_AF2_catres_bb_rmsd", "variants_AF2_postrelax_catres_heavy_rmsd_mean", "variants_AF2_postrelax_catres_bb_rmsd_mean", "variants_AF2_postrelax_ligand_rmsd_mean", "variants_AF2_postrelax_apo_catres_heavy_rmsd_mean", "variants_AF2_fastrelax_sap_score_mean", "variants_AF2_fastrelax_hbonds_pre_mean", "variants_AF2_fastrelax_hbonds_post_mean", "variants_AF2_lig_contacts"],
+            y_labels=["Angstrom", "Angstrom", "Angstrom", "Angstrom", "Angstrom", "Angstrom", "SAP score", "# hbonds", "# hbonds", "# contacts"],
+            titles=["Mean AF2\nSidechain RMSD", "Mean AF2 catres\nBB RMSD", "Mean Relaxed\nSidechain RMSD", "Mean Relaxed catres\nBB RMSD", "Mean Relaxed ligand\nRMSD", "Mean Apo Relaxed\nSidechain RMSD", "Spatial Aggregation Propensity", "Pre-Relax\nhbonds to substrate", "Mean post-relax\nhbonds to substrate", "AF2 Ligand contacts"],
+            out_path=os.path.join(backbones.plots_dir, "variants_AF2_scores.png"),
             show_fig=False
         )
 
@@ -2108,8 +2097,8 @@ if __name__ == "__main__":
 
     # screening
     argparser.add_argument("--screen_input_json", type=str, default=None, help="Read in a poses json file containing input poses for screening (e.g. the successful_input_motifs.json from a previous screening run).")
-    argparser.add_argument("--screen_decentralize_weights", type=str, nargs="+", default=[20], help="Decentralize weights that should be tested during screening.")
-    argparser.add_argument("--screen_decentralize_distances", type=str, nargs="+", default=[2], help="Decentralize distances that should be tested during screening.")
+    argparser.add_argument("--screen_decentralize_weights", type=str, default="20,40", help="Decentralize weights that should be tested during screening. Separated by ','.")
+    argparser.add_argument("--screen_decentralize_distances", type=str, default="2,4", help="Decentralize distances that should be tested during screening. Separated by ','.")
     argparser.add_argument("--screen_input_poses", type=int, default=200, help="Number of input poses for screening. Poses will be selected according to <screen_input_selection>.")
     argparser.add_argument("--screen_input_selection", default="top", help="Can be either 'top' (default), 'random' or 'weighted'. Defines if motif library input poses are chosen based on score, at random or random weighted by score.")
     argparser.add_argument("--screen_num_rfdiffusions", type=int, default=5, help="Number of backbones to generate per input path during screening.")
@@ -2180,12 +2169,13 @@ if __name__ == "__main__":
 
     # filtering options
     argparser.add_argument("--rfdiffusion_max_clashes", type=int, default=10, help="Filter rfdiffusion output for ligand-backbone clashes before passing poses to LigandMPNN.")
-    argparser.add_argument("--rfdiffusion_min_ligand_contacts", type=float, default=4, help="Filter rfdiffusion output for number of ligand contacts (Ca atoms within 8A divided by number of ligand atoms) before passing poses to LigandMPNN.")
     argparser.add_argument("--rfdiffusion_max_rog", type=float, default=18, help="Filter rfdiffusion output for radius of gyration before passing poses to LigandMPNN.")
     argparser.add_argument("--ligand_clash_factor", type=float, default=0.9, help="Factor for determining clashes. Set to 0 if ligand clashes should be ignored.")
     argparser.add_argument("--rfdiffusion_catres_bb_rmsd", type=float, default=1, help="Filter RFdiffusion output for catalytic residue backbone rmsd.")
     argparser.add_argument("--rfdiffusion_motif_bb_rmsd", type=float, default=1, help="Filter RFdiffusion output for fragment motif backbone rmsd.")
     argparser.add_argument("--rfdiffusion_options", type=str, default="", help="Additional options for RFdiffusion runs.")
+    argparser.add_argument("--min_contacts", type=int, default=5, help="Mininum number of backbone atoms within 8 A per ligand heavy atom after prediction.")
+    argparser.add_argument("--contacts_target_value", type=int, default=9, help="Target number of backbone atoms within 8 A per ligand heavy atom after prediction.")
 
     arguments = argparser.parse_args()
 

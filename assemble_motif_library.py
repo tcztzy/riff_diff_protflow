@@ -625,7 +625,7 @@ def main(args):
         for index, series in pose_df.iterrows():
             chain = struct[series['model_num']]['A']
             if channel_path and args.preserve_channel_coordinates == True:
-                if distance_detection(chain, load_structure_from_pdbfile(channel_path)[args.channel_chain], True, False, args.channel_clash_detection_vdw_multiplier) == True:
+                if distance_detection(chain, load_structure_from_pdbfile(channel_path)["Q"], True, False, args.channel_clash_detection_vdw_multiplier) == True:
                     channel_clashes += 1
                     continue
             chain.id = chain_alphabet()[counter]
@@ -885,7 +885,7 @@ if __name__ == "__main__":
 
     # stuff you might want to adjust
     argparser.add_argument("--max_paths_per_ensemble", type=int, default=None, help="Maximum number of paths per ensemble (=same fragments but in different order)")
-    argparser.add_argument("--channel_clash_detection_vdw_multiplier", type=float, default=0.9, help="Multiplier for VanderWaals radii for clash detection between backbone fragments and channel placeholder. Clash is detected if distance_between_atoms < (VdW_radius_atom1 + VdW_radius_atom2)*multiplier")
+    argparser.add_argument("--channel_clash_detection_vdw_multiplier", type=float, default=1.1, help="Multiplier for VanderWaals radii for clash detection between backbone fragments and channel placeholder. Clash is detected if distance_between_atoms < (VdW_radius_atom1 + VdW_radius_atom2)*multiplier")
     argparser.add_argument("--fragment_backbone_clash_detection_vdw_multiplier", type=float, default=1.0, help="Multiplier for VanderWaals radii for clash detection inbetween backbone fragments. Clash is detected if distance_between_atoms < (VdW_radius_atom1 + VdW_radius_atom2)*multiplier")
     argparser.add_argument("--backbone_ligand_clash_detection_vdw_multiplier", type=float, default=1.0, help="Multiplier for VanderWaals radii for clash detection between fragment backbones and ligand. Set None if no ligand is present. Clash is detected if distance_between_atoms < (VdW_radius_atom1 + VdW_radius_atom2)*multiplier")
     argparser.add_argument("--rotamer_ligand_clash_detection_vdw_multiplier", type=float, default=0.75, help="Multiplier for VanderWaals radii for clash detection between rotamer sidechain and ligand. Clash is detected if distance_between_atoms < (VdW_radius_atom1 + VdW_radius_atom2)*multiplier")

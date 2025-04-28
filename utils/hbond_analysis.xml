@@ -1,0 +1,27 @@
+<ROSETTASCRIPTS>
+	<SCOREFXNS>
+		<ScoreFunction name="beta" weights="beta"/>
+	</SCOREFXNS>
+	<RESIDUE_SELECTORS>
+		<Index name="catres" resnums="%%cat_res%%" error_on_out_of_bounds_index="False" />
+		<Chain name="substrate" chains="%%substrate_chain%%" />
+		<Or name="hbond_targets" selectors="catres,substrate" />
+	</RESIDUE_SELECTORS>
+	<TASKOPERATIONS>
+	</TASKOPERATIONS>
+	<MOVE_MAP_FACTORIES>
+	</MOVE_MAP_FACTORIES>
+	<SIMPLE_METRICS>
+		<HbondMetric name="hbonds" custom_type="target" output_as_pdb_nums="True" residue_selector="hbond_targets" include_self="false" />
+	</SIMPLE_METRICS>
+	<FILTERS>
+	</FILTERS>
+	<MOVERS>
+		<RunSimpleMetrics name="calc_metrics" metrics="hbonds" />
+	</MOVERS>
+	<PROTOCOLS>
+		<Add mover_name="calc_metrics" />
+		Add mover_name="pmm" />
+	</PROTOCOLS>
+	<OUTPUT scorefxn="beta" />
+</ROSETTASCRIPTS>
