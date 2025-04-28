@@ -864,6 +864,8 @@ def main(args):
 
     bb_opt_options = f"-parser:protocol {os.path.abspath(os.path.join(args.riff_diff_dir, 'utils', 'fr_constrained.xml'))} -beta -ignore_zero_occupancy false -flip_HNQ true -use_input_sc true"
     fr_options = f"-parser:protocol {os.path.abspath(os.path.join(protflow.config.AUXILIARY_RUNNER_SCRIPTS_DIR, 'fastrelax_sap.xml'))} -beta -ignore_zero_occupancy false -flip_HNQ true -use_input_sc true"
+    fr_options_holo = f"-parser:protocol {os.path.abspath(os.path.join(args.riff_diff_dir, 'utils', 'fastrelax.xml'))} -beta -ignore_zero_occupancy false -flip_HNQ true -use_input_sc true -parser:script_vars motif_res=substrate_chain=Z"
+
     if params:
         fr_options = fr_options + f" -extra_res_fa {' '.join(params)}"
         bb_opt_options = bb_opt_options + f" -extra_res_fa {' '.join(params)}"
@@ -1456,15 +1458,18 @@ def main(args):
                 prefix = f"cycle_{cycle}_fastrelax",
                 rosetta_application="rosetta_scripts.default.linuxgccrelease",
                 nstruct = 3,
-                options = fr_options
+                options = fr_options_holo
             )
+
+            backbones.df[f"cycle_{cycle}_fastrelax_hbonds_pre"] = backbones.df[[col for col in backbones.df.columns if col.startswith(f"cycle_{cycle}_fastrelax_pre_hbonds")]].sum(axis=1)
+            backbones.df[f"cycle_{cycle}_fastrelax_hbonds_post"] = backbones.df[[col for col in backbones.df.columns if col.startswith(f"cycle_{cycle}_fastrelax_post_hbonds")]].sum(axis=1)
 
             # calculate RMSD on relaxed poses
             logging.info(f"Calculating RMSD of catalytic residues and ligand for relaxed poses...")
             backbones = catres_motif_heavy_rmsd.run(poses = backbones, prefix = f"cycle_{cycle}_postrelax_catres_heavy")
             backbones = catres_motif_bb_rmsd.run(poses = backbones, prefix = f"cycle_{cycle}_postrelax_catres_bb")
             backbones = ligand_rmsd.run(poses = backbones, prefix = f"cycle_{cycle}_postrelax_ligand")
-            backbones= calculate_mean_scores(poses=backbones, scores=[f"cycle_{cycle}_postrelax_catres_heavy_rmsd", f"cycle_{cycle}_postrelax_catres_bb_rmsd", f"cycle_{cycle}_postrelax_ligand_rmsd", f"cycle_{cycle}_fastrelax_sap_score"], remove_layers=1)
+            backbones = calculate_mean_scores(poses=backbones, scores=[f"cycle_{cycle}_postrelax_catres_heavy_rmsd", f"cycle_{cycle}_postrelax_catres_bb_rmsd", f"cycle_{cycle}_postrelax_ligand_rmsd", f"cycle_{cycle}_fastrelax_sap_score", f"cycle_{cycle}_fastrelax_hbonds_pre", f"cycle_{cycle}_fastrelax_hbonds_post"], remove_layers=1)
 
             # filter backbones down to relax input backbones
             backbones.filter_poses_by_rank(n=1, score_col=f"cycle_{cycle}_fastrelax_total_score", remove_layers=1)
@@ -1481,8 +1486,8 @@ def main(args):
 
             # calculate multi-scoreterm score for the final backbone filter:
             logging.info("Calculating composite score for refinement evaluation...")
-            ref_comp_scoreterms = [f"cycle_{cycle}_esm_plddt", f"cycle_{cycle}_esm_tm_TM_score_ref", f"cycle_{cycle}_esm_catres_bb_rmsd", f"cycle_{cycle}_esm_catres_heavy_rmsd", f"cycle_{cycle}_motif_rmsd", f"cycle_{cycle}_delta_apo_holo", f"cycle_{cycle}_postrelax_ligand_rmsd", f"cycle_{cycle}_postrelax_catres_heavy_rmsd", f"cycle_{cycle}_fastrelax_sap_score_mean", f"cycle_{cycle}_postrelax_apo_catres_heavy_rmsd"]
-            ref_comp_weights = [-2, -2, 8, 4, 2, 2, 2, 2, 1, 2]
+            ref_comp_scoreterms = [f"cycle_{cycle}_esm_plddt", f"cycle_{cycle}_esm_tm_TM_score_ref", f"cycle_{cycle}_esm_catres_bb_rmsd", f"cycle_{cycle}_esm_catres_heavy_rmsd", f"cycle_{cycle}_motif_rmsd", f"cycle_{cycle}_delta_apo_holo", f"cycle_{cycle}_postrelax_ligand_rmsd", f"cycle_{cycle}_postrelax_catres_heavy_rmsd", f"cycle_{cycle}_fastrelax_sap_score_mean", f"cycle_{cycle}_postrelax_apo_catres_heavy_rmsd", f"cycle_{cycle}_fastrelax_hbonds_pre_mean", f"cycle_{cycle}_fastrelax_hbonds_post_mean"]
+            ref_comp_weights = [-2, -2, 8, 4, 2, 2, 2, 2, 1, 1, 2, 2]
             backbones.calculate_composite_score(
                 name=f"cycle_{cycle}_refinement_composite_score",
                 scoreterms=ref_comp_scoreterms,
@@ -1649,8 +1654,11 @@ def main(args):
             prefix = "final_fastrelax",
             rosetta_application="rosetta_scripts.default.linuxgccrelease",
             nstruct = 10,
-            options = fr_options
+            options = fr_options_holo
         )
+
+        backbones.df[f"final_fastrelax_hbonds_pre"] = backbones.df[[col for col in backbones.df.columns if col.startswith(f"final_fastrelax_pre_hbonds")]].sum(axis=1)
+        backbones.df[f"final_fastrelax_hbonds_post"] = backbones.df[[col for col in backbones.df.columns if col.startswith(f"final_fastrelax_post_hbonds")]].sum(axis=1)
 
         # calculate RMSDs of relaxed poses
         backbones = catres_motif_heavy_rmsd.run(poses = backbones, prefix = f"final_postrelax_catres_heavy")
@@ -1658,7 +1666,7 @@ def main(args):
         backbones = ligand_rmsd.run(poses = backbones, prefix = "final_postrelax_ligand")
 
         # average values for all relaxed poses
-        backbones = calculate_mean_scores(poses=backbones, scores=["final_postrelax_catres_heavy_rmsd", "final_postrelax_catres_bb_rmsd", "final_postrelax_ligand_rmsd", "final_fastrelax_sap_score"], remove_layers=1)
+        backbones = calculate_mean_scores(poses=backbones, scores=["final_postrelax_catres_heavy_rmsd", "final_postrelax_catres_bb_rmsd", "final_postrelax_ligand_rmsd", "final_fastrelax_sap_score", f"final_fastrelax_hbonds_pre", f"final_fastrelax_hbonds_post"], remove_layers=1)
         
         # filter to relaxed pose with best score
         backbones.filter_poses_by_rank(n=1, score_col="final_fastrelax_total_score", remove_layers=1)
@@ -1906,7 +1914,7 @@ def main(args):
             prefix = f"variants_fastrelax",
             rosetta_application="rosetta_scripts.default.linuxgccrelease",
             nstruct = 3,
-            options = fr_options
+            options = fr_options_holo
         )
 
         # calculate delta apo holo score
@@ -2019,7 +2027,7 @@ def main(args):
             prefix = "variants_AF2_fastrelax",
             rosetta_application="rosetta_scripts.default.linuxgccrelease",
             nstruct = 5,
-            options = fr_options
+            options = fr_options_holo
         )
 
         # calculate RMSDs of relaxed poses
@@ -2108,8 +2116,8 @@ if __name__ == "__main__":
 
     # screening
     argparser.add_argument("--screen_input_json", type=str, default=None, help="Read in a poses json file containing input poses for screening (e.g. the successful_input_motifs.json from a previous screening run).")
-    argparser.add_argument("--screen_decentralize_weights", type=str, default="20,40", help="Decentralize weights that should be tested during screening. Separated by ','.")
-    argparser.add_argument("--screen_decentralize_distances", type=str, default="2,4", help="Decentralize distances that should be tested during screening. Separated by ','.")
+    argparser.add_argument("--screen_decentralize_weights", type=str, nargs="+", default=[20], help="Decentralize weights that should be tested during screening.")
+    argparser.add_argument("--screen_decentralize_distances", type=str, nargs="+", default=[2], help="Decentralize distances that should be tested during screening.")
     argparser.add_argument("--screen_input_poses", type=int, default=200, help="Number of input poses for screening. Poses will be selected according to <screen_input_selection>.")
     argparser.add_argument("--screen_input_selection", default="top", help="Can be either 'top' (default), 'random' or 'weighted'. Defines if motif library input poses are chosen based on score, at random or random weighted by score.")
     argparser.add_argument("--screen_num_rfdiffusions", type=int, default=5, help="Number of backbones to generate per input path during screening.")
