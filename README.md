@@ -29,7 +29,7 @@ cd riff_diff_protflow
 cp database/potentials.py /path/to/RFdiffusion/rfdiffusion/potentials/potentials.py
 ```
 
-If you want to experiment with the fragment picking pipeline, you need to download the fragment database from https://zenodo.org/records/15482348 (optional).
+If you want to experiment with the fragment picking pipeline, you need to download the fragment database from https://zenodo.org/records/15482348 and save it at /riff_diff_protflow/database/fraglib_noscore.pkl.
 
 
 # MANUAL
