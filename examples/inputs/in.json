@@ -1,0 +1,11 @@
+{
+  "working_dir": "output",
+  "theozyme_pdb": "inputs/5an7.pdb",
+  "theozyme_resnums": ["A1083", "A1051", "A1110", "A1180"],
+  "ligands": ["A5001"],
+  "add_equivalent_func_groups": true,
+  "A1083": {
+    "covalent_bonds": "NZ:A5001-C13",
+    "rot_lig_clash_vdw_multiplier": 0.7
+    }
+}

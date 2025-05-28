@@ -1222,13 +1222,11 @@ def update_covalent_bonds(covalent_bonds:str, rotamer_id:str, rotamer_position:i
 
 def import_input_json(file_path):
     """Reads a JSON file and returns its contents as a dictionary."""
-    try:
-        with open(file_path, 'r', encoding='utf-8') as file:
+    if not os.path.isfile(file_path):
+        raise KeyError(f"Could not find input json file at {file_path}!")
+    with open(file_path, 'r', encoding='utf-8') as file:
             data = json.load(file)
-        return data
-    except (FileNotFoundError, json.JSONDecodeError) as e:
-        print(f"Error reading JSON file: {e}")
-        return None
+    return data
 
 def extract_covalent_bond_info(covalent_bonds, theozyme_residue, lig_dict, resnum, chain):
     cov_bonds = []
@@ -1623,7 +1621,7 @@ def main(args):
 
     start = time.time()
     os.makedirs(args.working_dir, exist_ok=True)
-    logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(levelname)s - %(message)s', filename=os.path.join(args.working_dir, f"fragment_picker_{args.theozyme_resnums}.log"))
+    logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(levelname)s - %(message)s', filename=os.path.join(args.working_dir, f"motif_library_{os.path.splitext(os.path.basename(args.theozyme_pdb))[0]}.log"))
 
     fragment_dir = os.path.join(args.working_dir, f"{args.output_prefix}_fragments" if args.output_prefix else "fragments")
     os.makedirs(fragment_dir, exist_ok=True)
@@ -1874,7 +1872,7 @@ def main(args):
             log_and_print(f"Discarded {check_dict['bb_clashes']} fragments that show clashes between backbone and ligand with VdW multiplier {res_args.bb_lig_clash_vdw_multiplier}")
             log_and_print(f"Discarded {len(check_dict['sc_clashes'])} fragments that show clashes between sidechain and ligand with VdW multiplier {res_args.rot_lig_clash_vdw_multiplier}")
             if len(check_dict["sc_clashes"]) > 0:
-                log_and_print(f"Atoms involved in sidechain-ligand clashes: {Counter(check_dict["sc_clashes"])}")
+                log_and_print(f"Atoms involved in sidechain-ligand clashes: {Counter(check_dict['sc_clashes'])}")
                 log_and_print(f"You might want to try to adjust the <rot_lig_clash_vdw_multiplier> parameter (currently: {res_args.rot_lig_clash_vdw_multiplier}) for this residue: {chain}{resnum}")
             log_and_print(f"Discarded {check_dict['rmsd_fails']} fragments that did not pass RMSD cutoff of {res_args.rmsd_cutoff} to all other picked fragments")
             passed_frags = len(check_dict["selected_frags"])
@@ -2042,7 +2040,7 @@ def main(args):
     post_clash['path_score'] = post_clash['ensemble_score']
     post_clash['path_num_matches'] = 0
     
-    # filter for top ensembles to speed things up, since paths within an ensemble have the same score if not running master
+    # filter for top ensembles to speed things up, since paths within an ensemble have the same score
     paths = ["".join(perm) for perm in itertools.permutations(chains)]
     post_clash = sort_dataframe_groups_by_column(df=post_clash, group_col="ensemble_num", sort_col="path_score", ascending=False, filter_top_n=args.max_out)
     dfs = [post_clash.assign(path_name=post_clash['ensemble_num'].astype(str)+"_" + p) for p in paths]
@@ -2062,7 +2060,6 @@ def main(args):
     # select top n paths
     log_and_print(f"Selecting top {args.max_out} paths...")
     top_path_df = sort_dataframe_groups_by_column(df=path_df, group_col="path_name", sort_col="path_score", ascending=False, filter_top_n=args.max_out)
-    print(len(top_path_df))
 
     log_and_print(f"Found {int(len(top_path_df.index)/len(chains))} paths.")
 
@@ -2175,7 +2172,7 @@ if __name__ == "__main__":
     argparser.add_argument("--max_frags", type=int, default=100, help="Maximum number of frags that should be returned per active site residue.")
     #argparser.add_argument("--covalent_bonds", type=str, nargs="+", default=None, help="Add covalent bond(s) between residues and ligands in the form 'Res1-Res1Atom:Lig1-Lig1Atom,Res2-Res2Atom:Lig2-Lig2Atom'. Atom names should follow PDB numbering schemes. Example: 'A23-NE2:Z1-C1 A26-OE1:Z1-C11' for two covalent bonds between the NE2 atom of a Histidine at position A23 to C1 atom of ligand Z1 and the OE1 atom of a glutamic acid at A26 to C11 on the same ligand.")
     argparser.add_argument("--rot_lig_clash_vdw_multiplier", type=float, default=0.8, help="Multiplier for VanderWaals radii for clash detection between rotamer and ligand. Functional groups are not checked! Clash is detected if a distance between atoms < (VdW_radius_atom1 + VdW_radius_atom2)*multiplier.")
-    argparser.add_argument("--bb_lig_clash_vdw_multiplier", type=float, default=1, help="Multiplier for VanderWaals radii for clash detection between fragment backbone and ligand. Clash is detected if a distance between atoms < (VdW_radius_atom1 + VdW_radius_atom2)*multiplier.")
+    argparser.add_argument("--bb_lig_clash_vdw_multiplier", type=float, default=1.0, help="Multiplier for VanderWaals radii for clash detection between fragment backbone and ligand. Clash is detected if a distance between atoms < (VdW_radius_atom1 + VdW_radius_atom2)*multiplier.")
     argparser.add_argument("--channel_frag_clash_vdw_multiplier", type=float, default=1.0, help="Multiplier for VanderWaals radii for clash detection between fragment backbone and channel placeholder. Clash is detected if a distance between atoms < (VdW_radius_atom1 + VdW_radius_atom2)*multiplier.")
 
     # options if running in fragment picking mode (<pick_frags_from_db> is set)
@@ -2205,7 +2202,6 @@ if __name__ == "__main__":
     argparser.add_argument("--frag_frag_bb_clash_vdw_multiplier", type=float, default=0.9, help="Multiplier for VanderWaals radii for clash detection inbetween backbone fragments. Clash is detected if distance_between_atoms < (VdW_radius_atom1 + VdW_radius_atom2)*multiplier.")
     argparser.add_argument("--frag_frag_sc_clash_vdw_multiplier", type=float, default=0.8, help="Multiplier for VanderWaals radii for clash detection fragment sidechains. Clash is detected if distance_between_atoms < (VdW_radius_atom1 + VdW_radius_atom2)*multiplier.")
     argparser.add_argument("--fragment_score_weight", type=float, default=1, help="Maximum number of cpus to run on")
-    argparser.add_argument("--match_cutoff", type=int, default=1, help="Remove all ensembles that have less matches than <match_cutoff> below <master_rmsd_cutoff>")
     argparser.add_argument("--max_out", type=int, default=2000, help="Maximum number of output paths")
 
 
