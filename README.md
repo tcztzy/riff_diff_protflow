@@ -34,36 +34,35 @@ If you want to experiment with the fragment picking pipeline, you need to downlo
 
 # MANUAL
 
-The riff-diff pipeline is divided into 3 major scripts:
-  1) generation of fragments for a provided theozyme (identify_fragments.py)
-  2) assembly of these fragments into a motif library (assemble_motif_library.py)
-  3) generation of structures and refinement (structure_generation.py)
+The riff-diff pipeline is divided into 2 major scripts:
+  1) generation of fragments for a provided theozyme to create a motif library (create_fragment_library.py)
+  2) generation of structures and refinement (structure_generation.py)
 This manual will walk you through each of these steps to create proficient de novo enzymes or small molecule binders.
 
-# FRAGMENT IDENTIFICATION
+# MOTIF LIBRARY CREATION
 
 For each of the active site residues in the theozyme, fragments will be created by inverting the rotamers and attaching a backbone fragment. The fragments are mainly selected based on rotamer preference.
 
-An example command to run fragment_identification.py can be found in the examples folder. Make sure to run this command having the python environment of riff_diff activated that has protflow installed. The command is written to be run from the riff_diff_protflow root directory:
+An example command to run create_fragment_library.py can be found in the examples folder. Make sure to run this command having the python environment of riff_diff activated that has protflow installed. This script uses either cmd-line arguments or a json file as input. An example json file can be found at riff_diff_protflow/examples/inputs/in.json. You can run the script using motif_library_generation.sh.
 
 ```
-./examples/fragment_identification.sh
+cd examples
+sbatch motif_library_generation.sh
 ```
 
-By default, the backbone fragment consists of a 7-residue idealized helical fragment, but this can be replaced by custom fragments if desired using the --fragment_pdb flag. The mandatory inputs for fragment identification (identify_fragments.py) are:
+By default, the backbone fragment consists of a 7-residue idealized helical fragment, but this can be replaced by custom fragments if desired using the --fragment_pdb flag. The mandatory inputs are:
   - --riff_diff_dir: required to find paths to database etc
   - --theozyme_pdb: path to the theozyme input
-  - --theozyme_resnums: comma-separated list of all active site residues with chain information that should be present in the catalytic motif (e.g. 25A,38A,188B)
+  - --theozyme_resnums: list of all active site residues with chain information that should be present in the catalytic motif
   - --working_dir: directory where all output will be saved
-  - --output_prefix: to run different settings in the same working directory, can be any string
-  - --ligands: comma-separated list of all ligand residues with chain information that should be present in the catalytic motif (e.g. X188,Z1)
-If you want to modify some options just for certain residues, you can run these separately using the same output directory and prefix.
-Other important flags include:  
+  - --ligands: list of all ligand residues with chain information that should be present in the catalytic motif
+You can specify these commands on the cmd-line, but using an input json offers more flexibility as each option can be set for a specific residue (see the example file in.json). Important options are:
   - --add_equivalent_func_groups: if one of the catalytic residues is ASP/ASN/ILE, also create fragments with GLU/GLN/VAL
   - --channel_chain: Riff-Diff uses a placeholder fragment to ensure binding pocket formation. If you want to provide a custom channel, provide the chain name
                                   of the respective chain in the theozyme pdb
   - --rotamer_position: select position of the active site residue on the backbbone fragment (by default, all positions except for N- and C-terminus of the fragment are selected)
 
+If fragment generation fails, this is often due to clashes being detected. You can decrease the Van-der-Waals-multiplier to make clash detection less strict by setting the option --rot_lig_clash_vdw_multiplier to a lower value.
 Instead of providing a predefined backbone fragment, Riff-Diff can also search the PDB for the most appropriate fragments based on rotamer and backbone occurrences using the flag --pick_frags_from_db. You need to download the fragment library from (insert_link_here) first and place it in the Riff-Diff database folder. This will result in fragments with higher rotamer probabilities, however these fragments typically yield worse output in the subsequent diffusion steps compared to the default idealized helix fragment. It is still experimental and not recommended!
 
 After running the script, all selected fragments can be found in the output directory, together with some information about the selected rotamers and fragments in the respective subfolders.
