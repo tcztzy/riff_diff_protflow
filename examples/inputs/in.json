@@ -1,11 +1,12 @@
 {
-  "working_dir": "output",
+  "working_dir": "outputs",
   "theozyme_pdb": "inputs/5an7.pdb",
-  "theozyme_resnums": ["A1083", "A1051", "A1110", "A1180"],
-  "ligands": ["A5001"],
-  "add_equivalent_func_groups": true,
+  "theozyme_resnums": ["A1083", "A1051", "A1110", "A1180"], # residue numbers of active site residues in input PDB
+  "max_paths_per_ensemble": 1, # creates more diverse output motifs, because only one order of fragments will be sampled (e.g. only ABCD, but not ABDC/ADBC/ACBD etc.)
+  "ligands": ["A5001"], # residue number of ligand in input PDB
+  "add_equivalent_func_groups": true, # create fragments with GLN and ASN rotamers (for A1110)
   "A1083": {
-    "covalent_bonds": "NZ:A5001-C13",
-    "rot_lig_clash_vdw_multiplier": 0.7
+    "covalent_bonds": "NZ:A5001-C13", # define covalent bond between A1083 lysine NZ and C13 on ligand
+    "rot_lig_clash_vdw_multiplier": 0.7 # decrease clash detection strictness (because of covalent bond)
     }
 }
