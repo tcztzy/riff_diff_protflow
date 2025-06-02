@@ -96,7 +96,7 @@ def write_align_cmds(input_data: pd.Series, ref_motif_col: str = "template_motif
         cmds.append(f"color deepsalmon, {rlx_pose_name}")
         cmds.append(f"select temp_rlxcat_res, {write_pymol_motif_selection(rlx_pose_name, input_data[target_catres_col])}")
         cmds.append(f"show sticks, temp_rlxcat_res")
-        cmds.append(f"delete temp_placercat_res")
+        cmds.append(f"delete temp_rlxcat_res")
 
     cmds.append(f"hide sticks, hydrogens")
     cmds.append(f"color atomic, (not elem C)")
@@ -145,7 +145,7 @@ def instantiate_trajectory_plotting(plot_dir: str, scores: list) -> dict[plots.P
 
 def update_trajectory_plotting(trajectory_plots:dict, poses: Poses, prefix: str):
     for traj in trajectory_plots:
-        trajectory_plots[traj].set_location(poses.plots_dir)
+        trajectory_plots[traj].set_location(os.path.join(poses.plots_dir, f"trajectory_{traj}.png"))
         trajectory_plots[traj].add_and_plot(poses.df[f"{prefix}_{traj}"], prefix)
     return trajectory_plots
 
@@ -427,7 +427,7 @@ def calculate_contact_score(df: pd.DataFrame, contact_col: str, score_col: str, 
     df[score_col] = abs(df[contact_col] - target_value)
     return df
 
-def pool_all_cycle_results(ref_dict: dict, plddt_cutoff:float, catres_bb_rmsd_cutoff:float, motif_bb_rmsd_cutoff:float, ligand_rmsd_cutoff:float, comp_score_scoreterms:list, comp_score_weights:list, refinement_dir:str) -> Poses:
+def pool_all_cycle_results(ref_dict: dict, plddt_cutoff:float, catres_bb_rmsd_cutoff:float, motif_bb_rmsd_cutoff:float, comp_score_scoreterms:list, comp_score_weights:list, refinement_dir:str) -> Poses:
     poses_list = []
     for cycle in ref_dict:
         backbones = ref_dict[cycle]
@@ -704,7 +704,7 @@ def sort_and_combine_relaxed_df(df: pd.DataFrame, group_name, out_dir, path_col,
 
 def combine_relax_output(df: pd.DataFrame, path_col: str, out_dir: str, out_col: str, group_col: str, score_col:str, fraction: float = 0.1, ascending: bool = True) -> pd.DataFrame:
     """
-    combines top <fraction> of PLACER models according to <score_col> into a single multimodel PDB.
+    combines top <fraction> of models according to <score_col> into a single multimodel PDB.
     """
     os.makedirs(out_dir, exist_ok=True)
     # group dataframe
@@ -774,7 +774,7 @@ def main(args):
     # setup jobstarters
     cpu_jobstarter = SbatchArrayJobstarter(max_cores=args.max_cpus, batch_cmds=args.max_cpus)
     small_cpu_jobstarter = SbatchArrayJobstarter(max_cores=10, batch_cmds=10)
-    gpu_jobstarter = cpu_jobstarter if args.cpu_only else SbatchArrayJobstarter(max_cores=args.max_gpus, gpus=1, batch_cmds=args.max_gpus)
+    gpu_jobstarter = cpu_jobstarter if args.prefer_cpu else SbatchArrayJobstarter(max_cores=args.max_gpus, gpus=1, batch_cmds=args.max_gpus)
     real_gpu_jobstarter = SbatchArrayJobstarter(max_cores=args.max_gpus, gpus=1, batch_cmds=args.max_gpus) # esmfold does not work on cpu
 
     # set up runners
@@ -1121,8 +1121,8 @@ def main(args):
 
 
             # calculate multi-scorerterm score for the final backbone filter:
-            screen_scoreterms = ["esm_plddt", "esm_tm_TM_score_ref", "esm_catres_bb_rmsd", "esm_catres_heavy_rmsd", "esm_motif_rmsd", "esm_contacts_score", "esm_ligand_clashes", "esm_rog_data"]
-            screen_weights = [-1, -1, 4, 3, 1, 1, 1, 1]
+            screen_scoreterms = ["esm_plddt", "esm_tm_TM_score_ref", "esm_catres_bb_rmsd", "esm_motif_rmsd", "esm_contacts_score", "esm_ligand_clashes", "esm_rog_data"]
+            screen_weights = [-1, -1, 4, 1, 1, 1, 1]
             backbones.calculate_composite_score(
                 name="screen_composite_score",
                 scoreterms=screen_scoreterms,
@@ -1355,7 +1355,7 @@ def main(args):
             backbones.calculate_composite_score(
                 name=f"cycle_{cycle}_refinement_composite_score",
                 scoreterms=ref_comp_scoreterms,
-                weights=ref_comp_scoreterms,
+                weights=ref_comp_weights,
                 plot=True
             )
 
@@ -1402,7 +1402,7 @@ def main(args):
             )
 
             results_dir = os.path.join(backbones.work_dir, f"cycle_{cycle}_results")
-            create_results_dir(poses=backbones, dir=results_dir, score_col=f"cycle_{cycle}_refinement_composite_score", plot_cols=ref_comp_scoreterms, placer_path_col=f"cycle_{cycle}_placer_top10_model_path")
+            create_results_dir(poses=backbones, dir=results_dir, score_col=f"cycle_{cycle}_refinement_composite_score", plot_cols=ref_comp_scoreterms)
 
         # combine results from all refinement cycles, if set
         if args.ref_skip_all_cycle_pooling:
@@ -1426,6 +1426,9 @@ def main(args):
         # create results directory
         refinement_results_dir = os.path.join(args.working_dir, f"{ref_prefix}refinement_results")
         create_results_dir(poses=backbones, dir=refinement_results_dir, score_col=f"cycle_final_refinement_composite_score", plot_cols=ref_comp_scoreterms)
+        for file in os.listdir(backbones.plots_dir):
+            if file.startswith("trajectory") and file.endswith(".png"):
+                shutil.copy(os.path.join(backbones.plots_dir, file), refinement_results_dir)
         backbones.save_scores(out_path=os.path.join(refinement_results_dir, f"results_{ref_prefix}refinement"))
         backbones.set_work_dir(args.working_dir)
         backbones.save_scores()
@@ -1443,7 +1446,7 @@ def main(args):
         elif args.screen_prefix: eval_prefix = f"{args.screen_prefix}_"
         else: eval_prefix = ""
 
-        backbones.set_work_dir(eval_work_dir := os.path.join(args.working_dir, f"{eval_prefix}evaluation"))
+        backbones.set_work_dir(os.path.join(args.working_dir, f"{eval_prefix}evaluation"))
 
         score_cols = [f"cycle_final_esm_plddt", f"cycle_final_esm_catres_bb_rmsd", f"cycle_final_esm_catres_heavy_rmsd", f"cycle_final_esm_motif_rmsd", f"cycle_final_esm_contacts_score", f"cycle_final_esm_ligand_clashes"]
         if args.eval_input_poses_per_bb:
@@ -1473,7 +1476,11 @@ def main(args):
         )
 
         # if run was interrupted, create new trajectories
-        if not trajectory_plots:
+        try:
+            if not trajectory_plots:
+                trajectory_plots = instantiate_trajectory_plotting(backbones.plots_dir, scores = trajectory_scoreterms)
+                trajectory_plots = update_trajectory_plotting(trajectory_plots=trajectory_plots, poses=backbones, prefix="cycle_final_esm")
+        except:
             trajectory_plots = instantiate_trajectory_plotting(backbones.plots_dir, scores = trajectory_scoreterms)
             trajectory_plots = update_trajectory_plotting(trajectory_plots=trajectory_plots, poses=backbones, prefix="cycle_final_esm")
         
@@ -1557,19 +1564,22 @@ def main(args):
         catres_motif_bb_rmsd.run(poses = rlx_poses, prefix = "eval_af2_postrelax_catres_bb")
         ligand_rmsd.run(poses = rlx_poses, prefix = "eval_af2_postrelax_ligand")
 
-        # calculate average scores, filter
+        # calculate average scores
         rlx_poses = calculate_mean_scores(rlx_poses, scores=["eval_af2_postrelax_catres_heavy_rmsd", "eval_af2_postrelax_catres_bb_rmsd", "eval_af2_postrelax_ligand_rmsd", "eval_af2_fastrelax_total_score", "eval_af2_fastrelax_sap_score"], remove_layers=1)
-        rlx_poses.filter_poses_by_rank(n=1, score_col="eval_af2_fastrelax_total_score", ascending=True, remove_layers=1)
 
         # combine relaxed poses into a single multimodel pdb
-        rlx_poses.df = combine_relax_output(rlx_poses.df, "poses", os.path.join(rlx_poses.work_dir, "relaxed_combined"), "eval_relaxed_combined_path", "eval_pre_relax_description", "eval_af2_fastrelax_total_score", 1) 
+        combined = combine_relax_output(rlx_poses.df, "poses", os.path.join(rlx_poses.work_dir, "relaxed_combined"), "eval_relaxed_combined_path", "eval_pre_relax_description", "eval_af2_fastrelax_total_score", 1)
+        rlx_poses.df = rlx_poses.df.merge(combined, on="eval_pre_relax_description", how="left") 
+
+        # filter for top structure
+        rlx_poses.filter_poses_by_rank(n=1, score_col="eval_af2_fastrelax_total_score", ascending=True, remove_layers=1)
 
         # merge with original poses
-        backbones.df = backbones.df.merge(rlx_poses.df["eval_pre_relax_description", "eval_af2_postrelax_catres_heavy_rmsd_mean", "eval_af2_postrelax_catres_bb_rmsd_mean", "eval_af2_postrelax_ligand_rmsd_mean", "eval_af2_fastrelax_total_score", "eval_af2_fastrelax_sap_score_mean"], on="eval_pre_relax_description")
+        backbones.df = backbones.df.merge(rlx_poses.df[["eval_pre_relax_description", "eval_relaxed_combined_path", "eval_af2_postrelax_catres_heavy_rmsd_mean", "eval_af2_postrelax_catres_bb_rmsd_mean", "eval_af2_postrelax_ligand_rmsd_mean", "eval_af2_fastrelax_total_score", "eval_af2_fastrelax_sap_score_mean"]], on="eval_pre_relax_description")
 
         # calculate eval composite score
-        eval_comp_scoreterms = ["eval_af2_plddt", "eval_af2_catres_bb_rmsd", "eval_af2_catres_heavy_rmsd", "eval_af2_motif_rmsd", "eval_af2_contacts_score", "eval_af2_ligand_clashes", "eval_af2_postrelax_catres_heavy_rmsd_mean", "eval_af2_postrelax_ligand_rmsd_mean", "eval_af2_fastrelax_sap_score_mean"]
-        eval_comp_weights = [-1, 1, 4, 1, 1, 1, 4, 1, 2]
+        eval_comp_scoreterms = ["eval_af2_plddt", "eval_af2_catres_bb_rmsd", "eval_af2_catres_heavy_rmsd", "eval_af2_motif_rmsd", "eval_af2_contacts_score", "eval_af2_ligand_clashes", "eval_af2_postrelax_catres_heavy_rmsd_mean", "eval_af2_postrelax_ligand_rmsd_mean", "eval_af2_fastrelax_sap_score_mean", "eval_af2_fastrelax_total_score"]
+        eval_comp_weights = [-1, 1, 4, 1, 1, 1, 4, 1, 2, 1]
         backbones.calculate_composite_score(
             name="eval_composite_score",
             scoreterms=eval_comp_scoreterms,
@@ -1584,6 +1594,9 @@ def main(args):
 
         eval_results_dir = os.path.join(args.working_dir, f"{eval_prefix}evaluation_results")
         create_results_dir(poses=backbones, dir=eval_results_dir, score_col="eval_composite_score", plot_cols=eval_comp_scoreterms, rlx_path_col="eval_relaxed_combined_path", create_mutations_csv=True)
+        for file in os.listdir(backbones.plots_dir):
+            if file.startswith("trajectory") and file.endswith(".png"):
+                shutil.copy(os.path.join(backbones.plots_dir, file), eval_results_dir)
         backbones.save_scores()
 
     ########################### VARIANT GENERATION ###########################
@@ -1864,14 +1877,20 @@ def main(args):
 
         # calculate average scores, filter
         rlx_poses = calculate_mean_scores(rlx_poses, scores=["variants_af2_postrelax_catres_heavy_rmsd", "variants_af2_postrelax_catres_bb_rmsd", "variants_af2_postrelax_ligand_rmsd", "variants_af2_fastrelax_total_score", "variants_af2_fastrelax_sap_score"], remove_layers=1)
+        
+        # combine relaxed poses into a single multimodel pdb
+        combined = combine_relax_output(rlx_poses.df, "poses", os.path.join(rlx_poses.work_dir, "relaxed_combined"), "variants_relaxed_combined_path", "variants_af2_pre_relax_description", "variants_af2_fastrelax_total_score", 1)
+        rlx_poses.df = rlx_poses.df.merge(combined, on="variants_af2_pre_relax_description", how="left") 
+
+        # filter for top structure
         rlx_poses.filter_poses_by_rank(n=1, score_col="variants_af2_fastrelax_total_score", ascending=True, remove_layers=1)
 
         # merge with original poses
-        backbones.df = backbones.df.merge(rlx_poses.df["variants_af2_pre_relax_description", "variants_af2_postrelax_catres_heavy_rmsd_mean", "variants_af2_postrelax_catres_bb_rmsd_mean", "variants_af2_postrelax_ligand_rmsd_mean", "variants_af2_fastrelax_total_score", "variants_af2_fastrelax_sap_score_mean"], on="variants_af2_pre_relax_description")
+        backbones.df = backbones.df.merge(rlx_poses.df[["variants_af2_pre_relax_description", "variants_af2_postrelax_catres_heavy_rmsd_mean", "variants_af2_postrelax_catres_bb_rmsd_mean", "variants_af2_postrelax_ligand_rmsd_mean", "variants_af2_fastrelax_total_score", "variants_af2_fastrelax_sap_score_mean", "variants_relaxed_combined_path"]], on="variants_af2_pre_relax_description")
 
         # calculate variants_af2 composite score
-        variants_af2_scoreterms = ["variants_af2_plddt", "variants_af2_catres_bb_rmsd", "variants_af2_catres_heavy_rmsd", "variants_af2_motif_rmsd", "variants_af2_contacts_score", "variants_af2_ligand_clashes", "variants_af2_postrelax_catres_heavy_rmsd_mean", "variants_af2_postrelax_ligand_rmsd_mean", "variants_af2_fastrelax_sap_score_mean"]
-        variants_af2_comp_weights = [-1, 1, 4, 1, 1, 1, 4, 1, 2]
+        variants_af2_scoreterms = ["variants_af2_plddt", "variants_af2_catres_bb_rmsd", "variants_af2_catres_heavy_rmsd", "variants_af2_motif_rmsd", "variants_af2_contacts_score", "variants_af2_ligand_clashes", "variants_af2_postrelax_catres_heavy_rmsd_mean", "variants_af2_postrelax_ligand_rmsd_mean", "variants_af2_fastrelax_sap_score_mean", "variants_af2_fastrelax_total_score"]
+        variants_af2_comp_weights = [-1, 1, 4, 1, 1, 1, 4, 1, 2, 1]
         backbones.calculate_composite_score(
             name="variants_af2_composite_score",
             scoreterms=variants_af2_scoreterms,
@@ -1889,7 +1908,7 @@ def main(args):
         backbones.filter_poses_by_rank(n=5, score_col="variants_af2_composite_score", remove_layers=2)
 
         # create output directory
-        create_results_dir(poses=backbones, dir=os.path.join(args.working_dir, f"{variants_prefix}variants_results"), score_col="variants_af2_composite_score", plot_cols=variants_af2_scoreterms, create_mutations_csv=True)
+        create_results_dir(poses=backbones, dir=os.path.join(args.working_dir, f"{variants_prefix}variants_results"), score_col="variants_af2_composite_score", plot_cols=variants_af2_scoreterms, rlx_path_col="variants_relaxed_combined_path", create_mutations_csv=True)
         backbones.save_scores()
 
 
@@ -1898,31 +1917,31 @@ if __name__ == "__main__":
     import argparse
     argparser = argparse.ArgumentParser(formatter_class=argparse.ArgumentDefaultsHelpFormatter)
 
-    argparser.add_argument("--riff_diff_dir", type=str, default=".", help="output_directory")
-    argparser.add_argument("--working_dir", type=str, required=True, help="output_directory")
+    argparser.add_argument("--riff_diff_dir", type=str, default=".", help="Directory that contains the Riff-Diff repository.")
+    argparser.add_argument("--working_dir", type=str, required=True, help="output directory.")
 
     # general optionals
     argparser.add_argument("--skip_refinement", action="store_true", help="Skip refinement and evaluation, only run screening.")
     argparser.add_argument("--skip_evaluation", action="store_true", help="Skip evaluation, only run screening and refinement.")
     argparser.add_argument("--params_files", type=str, default=None, help="Path to alternative params file. Can also be multiple paths separated by ';'.")
-    argparser.add_argument("--attnpacker_repack", action="store_true", help="Run attnpacker on ESM and af2 predictions")
+    argparser.add_argument("--attnpacker_repack", action="store_true", help="Run attnpacker and af2 predictions")
     argparser.add_argument("--use_reduced_motif", action="store_true", help="Instead of using the full fragments during backbone optimization, just use residues directly adjacent to fixed_residues. Also affects motif_bb_rmsd etc.")
 
     # jobstarter
-    argparser.add_argument("--cpu_only", action="store_true", help="Should only cpu's be used during the entire pipeline run?")
+    argparser.add_argument("--prefer_cpu", action="store_true", help="Use CPUs instead of GPUs, where possible (ESMFold will only work with GPU).")
     argparser.add_argument("--max_gpus", type=int, default=10, help="How many GPUs do you want to use at once?")
-    argparser.add_argument("--max_cpus", type=int, default=1000, help="How many cpus do you want to use at once?")
+    argparser.add_argument("--max_cpus", type=int, default=1000, help="How many CPUs do you want to use at once?")
 
     # screening
     argparser.add_argument("--screen_input_json", type=str, default=None, help="Read in a poses json file containing input poses for screening (e.g. the successful_input_motifs.json from a previous screening run).")
-    argparser.add_argument("--screen_decentralize_weights", type=str, nargs="+", default=[30], help="Decentralize weights that should be tested during screening. Separated by ','.")
-    argparser.add_argument("--screen_decentralize_distances", type=str, nargs="+", default=[2], help="Decentralize distances that should be tested during screening. Separated by ','.")
+    argparser.add_argument("--screen_decentralize_weights", type=str, nargs="+", default=[30], help="Decentralize weights that should be tested during screening.")
+    argparser.add_argument("--screen_decentralize_distances", type=str, nargs="+", default=[2], help="Decentralize distances that should be tested during screening.")
     argparser.add_argument("--screen_input_poses", type=int, default=200, help="Number of input poses for screening. Poses will be selected according to <screen_input_selection>.")
     argparser.add_argument("--screen_input_selection", default="top", help="Can be either 'top' (default), 'random' or 'weighted'. Defines if motif library input poses are chosen based on score, at random or random weighted by score.")
     argparser.add_argument("--screen_num_rfdiffusions", type=int, default=5, help="Number of backbones to generate per input path during screening.")
-    argparser.add_argument("--screen_skip_mpnn_rlx_mpnn", action="store_true", help="Skip LigandMPNN-RELAX-LigandMPNN steps and just run LigandMPNN once before prediction with ESMFold. Faster, but lower success rates (only recommended for initial screening purposes).")
+    argparser.add_argument("--screen_skip_mpnn_rlx_mpnn", action="store_true", help="Skip LigandMPNN-RELAX-LigandMPNN steps and just run LigandMPNN once before prediction with ESMFold. Faster, but lower success rates (only recommended for initial testing purposes).")
     argparser.add_argument("--screen_num_mpnn_sequences", type=int, default=30, help="Number of LigandMPNN sequences per backbone that should be generated and predicted with ESMFold post-RFdiffusion.")
-    argparser.add_argument("--screen_num_seq_thread_sequences", type=int, default=3, help="Number of LigandMPNN sequences that should be generated during the sequence threading phase (input for backbone optimization). Only used if <screen_mpnn_rlx_mpnn> is True.")
+    argparser.add_argument("--screen_num_seq_thread_sequences", type=int, default=3, help="Number of LigandMPNN sequences that should be generated during the sequence threading phase (input for backbone optimization). Only used if <screen_skip_mpnn_rlx_mpnn> is not set.")
     argparser.add_argument("--screen_prefix", type=str, default=None, help="Prefix for screening runs for testing different settings. Will be reused for subsequent steps if not specified otherwise.")
     argparser.add_argument("--screen_esm_input_poses", type=int, default=5000, help="Maximum total number of poses that should be predicted with ESMFold.")
 
@@ -1931,35 +1950,31 @@ if __name__ == "__main__":
     argparser.add_argument("--ref_prefix", type=str, default=None, help="Prefix for refinement runs for testing different settings.")
     argparser.add_argument("--ref_cycles", type=int, default=5, help="Number of Rosetta-MPNN-ESM refinement cycles.")
     argparser.add_argument("--ref_input_poses_per_bb", default=None, help="Filter the number of refinement input poses on an input-backbone level. This filter is applied before the ref_input_poses filter.")
-    argparser.add_argument("--ref_input_poses", type=int, default=100, help="Maximum number of input poses for refinement cycles after initial RFDiffusion-MPNN-ESM-Rosetta run. Poses will be filtered by screen_composite_score. Filter can be applied on a per-input-backbone level if using the flag --ref_input_per_backbone.")
-    argparser.add_argument("--ref_num_mpnn_seqs", type=int, default=25, help="Number of sequences that should be created with LigandMPNN during refinement.")
-    argparser.add_argument("--ref_catres_bb_rmsd_cutoff_end", type=float, default=0.7, help="End value for catres and motif backbone rmsd filter after each refinement cycle. Filter will be ramped from start to end during refinement.")
-    argparser.add_argument("--ref_catres_bb_rmsd_cutoff_start", type=float, default=1.2, help="Start value for catres and motif backbone rmsd filter after each refinement cycle. Filter will be ramped from start to end during refinement.")
-    argparser.add_argument("--ref_motif_rmsd_cutoff_end", type=float, default=1.0, help="End value for catres and motif backbone rmsd filter after each refinement cycle. Filter will be ramped from start to end during refinement.")
-    argparser.add_argument("--ref_motif_rmsd_cutoff_start", type=float, default=1.5, help="Start value for catres and motif backbone rmsd filter after each refinement cycle. Filter will be ramped from start to end during refinement.")
-    argparser.add_argument("--ref_plddt_cutoff_end", type=float, default=85, help="End value for esm plddt filter after each refinement cycle. Filter will be ramped from start to end during refinement.")
-    argparser.add_argument("--ref_plddt_cutoff_start", type=float, default=75, help="Start value for esm plddt filter after each refinement cycle. Filter will be ramped from start to end during refinement.")
-    argparser.add_argument("--ref_ligand_rmsd_end", type=float, default=2.0, help="End value for esm plddt filter after each refinement cycle. Filter will be ramped from start to end during refinement.")
-    argparser.add_argument("--ref_ligand_rmsd_start", type=float, default=2.8, help="Start value for esm plddt filter after each refinement cycle. Filter will be ramped from start to end during refinement.")
+    argparser.add_argument("--ref_input_poses", type=int, default=100, help="Maximum number of input poses for refinement cycles after initial RFDiffusion-MPNN-ESM-Rosetta run. Poses will be filtered by screen_composite_score.")
+    argparser.add_argument("--ref_num_mpnn_seqs", type=int, default=25, help="Number of sequences that should be created per pose with LigandMPNN during refinement.")
+    argparser.add_argument("--ref_catres_bb_rmsd_cutoff_end", type=float, default=0.7, help="End value for catalytic residue backbone rmsd filter after each refinement cycle. Filter will be ramped from start to end during refinement.")
+    argparser.add_argument("--ref_catres_bb_rmsd_cutoff_start", type=float, default=1.2, help="Start value for catalytic residue backbone rmsd filter after each refinement cycle. Filter will be ramped from start to end during refinement.")
+    argparser.add_argument("--ref_motif_rmsd_cutoff_end", type=float, default=1.0, help="End value for motif backbone rmsd filter after each refinement cycle. Filter will be ramped from start to end during refinement.")
+    argparser.add_argument("--ref_motif_rmsd_cutoff_start", type=float, default=1.5, help="Start value for motif backbone rmsd filter after each refinement cycle. Filter will be ramped from start to end during refinement.")
+    argparser.add_argument("--ref_plddt_cutoff_end", type=float, default=85, help="End value for ESMFold plddt filter after each refinement cycle. Filter will be ramped from start to end during refinement.")
+    argparser.add_argument("--ref_plddt_cutoff_start", type=float, default=75, help="Start value for ESMFold plddt filter after each refinement cycle. Filter will be ramped from start to end during refinement.")
     argparser.add_argument("--ref_num_cycle_poses", type=int, default=3, help="Number of poses per unique diffusion backbone that should be passed on to the next refinement cycle.")
     argparser.add_argument("--ref_seq_thread_num_mpnn_seqs", type=float, default=3, help="Number of LigandMPNN output sequences during the initial, sequence-threading phase (pre-relax).")
     argparser.add_argument("--ref_start_cycle", type=int, default=1, help="Number from which to start cycles. Useful if adding additional refinement cycles after a run has completed.")
-    argparser.add_argument("--ref_skip_all_cycle_pooling", action="store_true", help="Do not combine results of all refinement results, instead just use the last cycle.")
+    argparser.add_argument("--ref_skip_all_cycle_pooling", action="store_true", help="Do not combine results of all refinement results. Instead, just use the last cycle.")
 
     # evaluation
     argparser.add_argument("--eval_prefix", type=str, default=None, help="Prefix for evaluation runs for testing different settings or refinement outputs.")
-    argparser.add_argument("--eval_input_json", type=str, default=None, help="Read in a custom poses json containing input poses for evaluation.")
-    argparser.add_argument("--eval_input_poses", type=int, default=500, help="Maximum number of input poses for evaluation with AF2 after refinement. Poses will be filtered by screen_composite_score.")
-    argparser.add_argument("--eval_input_poses_per_bb", type=int, default=30, help="Maximum number of input poses per unique diffusion backbone for evaluation with AF2 after refinement. Poses will be filtered by screen_composite_score")
-    argparser.add_argument("--eval_mean_catres_bb_rmsd_cutoff", type=float, default=1.0, help="Cutoff for mean catres backbone rmsd over all AF2 models of each pose.")
+    argparser.add_argument("--eval_input_json", type=str, default=None, help="Read in a poses json containing input poses for evaluation.")
+    argparser.add_argument("--eval_input_poses", type=int, default=500, help="Maximum number of input poses for evaluation with AF2 after refinement. Poses will be filtered by cycle_final_refinement_composite_score.")
+    argparser.add_argument("--eval_input_poses_per_bb", type=int, default=30, help="Maximum number of input poses per unique diffusion backbone for evaluation with AF2 after refinement. Poses will be filtered by cycle_final_refinement_composite_score")
     argparser.add_argument("--eval_plddt_cutoff", type=float, default=85, help="Cutoff for plddt for the AF2 top model for each pose.")
-    argparser.add_argument("--eval_catres_bb_rmsd_cutoff", type=float, default=0.7, help="Cutoff for catres backbone rmsd for the AF2 top model for each pose.")
-    argparser.add_argument("--eval_ligand_rmsd_cutoff", type=int, default=2.5, help="Cutoff for ligand rmsd for the top relaxed model of the top AF2 model for each pose.")
+    argparser.add_argument("--eval_catres_bb_rmsd_cutoff", type=float, default=0.7, help="Cutoff for catalytic residue backbone rmsd for the AF2 top model for each pose.")
 
     # variant generation
     argparser.add_argument("--variants_prefix", type=str, default=None, help="Prefix for variant generation runs for testing different variants.")
-    argparser.add_argument("--variants_input_json", type=str, default=None, help="Read in a custom json containing poses from evaluation output.")
-    argparser.add_argument("--variants_mutations_csv", type=str, default=None, help="Read in a custom csv containing poses description and mutation columns.")
+    argparser.add_argument("--variants_input_json", type=str, default=None, help="Read in a poses json containing poses from evaluation output.")
+    argparser.add_argument("--variants_mutations_csv", type=str, default=None, help="Read in a custom csv containing poses description and mutation columns (as found in the evaluation_results directory).")
     argparser.add_argument("--variants_input_poses_per_bb", type=int, default=10, help="Number of poses per unique backbone that variant generation should be performed on.")
     argparser.add_argument("--variants_input_poses", type=int, default=50, help="Number of poses that variant generation should be performed on.")
     argparser.add_argument("--variants_evaluation_input_poses_per_bb", type=int, default=50, help="Number of poses per unique backbone that should go into the evaluation step of variant generation.")
@@ -1978,7 +1993,7 @@ if __name__ == "__main__":
     # rfdiffusion optionals
     argparser.add_argument("--recenter", type=str, default=None, help="Point (xyz) in input pdb towards the diffusion should be recentered. example: --recenter=-13.123;34.84;2.3209")
     argparser.add_argument("--flanking", type=str, default="split", help="How flanking should be set. nterm or cterm also valid options.")
-    argparser.add_argument("--flanker_length", type=int, default=30, help="Set Length of Flanking regions. For active_site model: 30 (recommended at least).")
+    argparser.add_argument("--flanker_length", type=int, default=30, help="Set Length of flanking regions.")
     argparser.add_argument("--total_length", type=int, default=200, help="Total length of protein to diffuse. This includes flanker, linkers and input fragments.")
 
     # ligandmpnn optionals
