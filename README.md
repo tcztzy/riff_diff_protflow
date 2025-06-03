@@ -58,8 +58,6 @@ By default, the backbone fragment consists of a 7-residue idealized helical frag
   - --ligands: list of all ligand residues with chain information that should be present in the catalytic motif
 You can specify these commands on the cmd-line, but using an input json offers more flexibility as each option can be set for a specific residue (see the example file in.json). Important options are:
   - --add_equivalent_func_groups: if one of the catalytic residues is ASP/ASN/ILE, also create fragments with GLU/GLN/VAL
-  - --channel_chain: Riff-Diff uses a placeholder fragment to ensure binding pocket formation. If you want to provide a custom channel, provide the chain name
-                                  of the respective chain in the theozyme pdb
   - --rotamer_position: select position of the active site residue on the backbbone fragment (by default, all positions except for N- and C-terminus of the fragment are selected)
   - --custom_channel_path: replaces the default channel with the channel from this pdb
   - --channel_chain: in which chain the channel in the pdb at channel_path is found
