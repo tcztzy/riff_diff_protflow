@@ -42,6 +42,7 @@ This manual will walk you through each of these steps to create proficient de no
 # MOTIF LIBRARY CREATION
 
 For each of the active site residues in the theozyme, fragments will be created by inverting the rotamers and attaching a backbone fragment. The fragments are mainly selected based on rotamer preference.
+A complete output for the generation of the motif library using the example input can be downloaded from https://doi.org/10.5281/zenodo.15588352. 
 
 An example command to run create_fragment_library.py can be found in the examples folder. Make sure to run this command having the python environment of riff_diff activated that has protflow installed. This script uses either cmd-line arguments or a json file as input. An example json file can be found at riff_diff_protflow/examples/inputs/in.json. You can run the script using motif_library_generation.sh. Depending on the number of fragments that are found, this script can generate several GB of data!
 
@@ -68,9 +69,15 @@ Instead of providing a predefined backbone fragment, Riff-Diff can also search t
 
 After running the script, two folders have been created in the output directory: fragments and motif_library_assembly. The folder fragments contains one multimodel PDB for each active site residue and additional information on selected fragments and rotamers. The folder motif_library_assembly contains the top motifs that passed clash detection and a folder called ligands. In this folder, the Rosetta .params files can be found for each selected ligand. These files can be manually modified, if needed. In the working directory, a a file called selected_paths.json contains information on all selected motifs. This file is the input for the next step, structure generation.
 
+
 # STRUCTURE GENERATION
 
-Structure generation proceeds in several stages, all bundled within the structure_generation.py script. Specifying a working directory (--working_dir) is mandatory for all.
+Structure generation proceeds in several stages, all bundled within the structure_generation.py script. Specifying a working directory (--working_dir) is mandatory for all. A complete output using the example input can be downloaded from https://doi.org/10.5281/zenodo.15588352. The example script can be started like this:
+
+```
+cd examples
+sbatch structure_generation.sh
+```
 
 ## Stage 1: Screening
 
