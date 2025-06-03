@@ -9,33 +9,75 @@ from protflow.utils.utils import vdw_radii
 from protflow.utils.biopython_tools import load_structure_from_pdbfile
 
 @lru_cache(maxsize=10000000)
-def clash_detection_LRU(entity1, entity2, bb_multiplier:float, sc_multiplier:float, vdw_radii:dict):
+def clash_detection_LRU(entity1, entity2, bb_multiplier:float, sc_multiplier:float, vdw:dict):
     '''
     checks for clashes by comparing VanderWaals radii. If clashes with ligand should be detected, set ligand to true. Ligand chain must be added as second entity.
     bb_only: only detect backbone clashes between to proteins or a protein and a ligand.
     clash_detection_vdw_multiplier: multiply Van der Waals radii with this value to set clash detection limits higher/lower
     database: path to database directory
     '''
-    backbone_atoms = ['CA', 'C', 'N', 'O', 'H']
-    entity1_atoms = (atom for atom in entity1.get_atoms())
-    entity2_atoms = (atom for atom in entity2.get_atoms())
 
-    vdw_radii = json.loads(vdw_radii)
+    def calculate_clashes(entity1_coords, entity2_coords, entity1_vdw, entity2_vdw, vdw_multiplier):
+        # Compute pairwise distances using broadcasting
+        dgram = np.linalg.norm(entity1_coords[:, np.newaxis] - entity2_coords[np.newaxis, :], axis=-1)
 
-    for atom_combination in itertools.product(entity1_atoms, entity2_atoms):
-        distance = atom_combination[0] - atom_combination[1]
-        element1 = atom_combination[0].element
-        element2 = atom_combination[1].element
-        if atom_combination[0].name in backbone_atoms and atom_combination[1].name in backbone_atoms:
-            vdw_multiplier = bb_multiplier
-        else:
-            vdw_multiplier = sc_multiplier
-        clash_detection_limit = vdw_multiplier * (vdw_radii[str(element1).lower()] + vdw_radii[str(element2).lower()])
-        if distance < clash_detection_limit:
+        # calculate distance cutoff for each atom pair, considering VdW radii
+        distance_cutoff = entity1_vdw[:, np.newaxis] + entity2_vdw[np.newaxis, :]
+
+        # multiply distance cutoffs with set parameter
+        distance_cutoff = distance_cutoff * vdw_multiplier
+
+        # compare distances to distance_cutoff
+        check = dgram - distance_cutoff
+
+        if np.any(check < 0):
             return True
+        else:
+            return False
 
-    return False
+    backbone_atoms = ['CA', 'C', 'N', 'O']
+    vdw = json.loads(vdw)
 
+    # ugly, but should be faster because only iterating once
+    entity1_bb_atoms = []
+    entity1_sc_atoms = []
+    for atom in entity1.get_atoms():
+        if atom.element == "H":
+            continue
+        if atom.id in backbone_atoms:
+            entity1_bb_atoms.append(atom)
+        else:
+            entity1_sc_atoms.append(atom)
+
+    entity2_bb_atoms = []
+    entity2_sc_atoms = []
+    for atom in entity2.get_atoms():
+        if atom.element == "H":
+            continue
+        if atom.id in backbone_atoms:
+            entity2_bb_atoms.append(atom)
+        else:
+            entity2_sc_atoms.append(atom)
+
+    entity1_bb_coords = np.array([atom.get_coord() for atom in entity1_bb_atoms])
+    entity2_bb_coords = np.array([atom.get_coord() for atom in entity2_bb_atoms])
+
+    entity1_bb_vdw = np.array([vdw[atom.element.lower()] for atom in entity1_bb_atoms])
+    entity2_bb_vdw = np.array([vdw[atom.element.lower()] for atom in entity2_bb_atoms])
+
+    if calculate_clashes(entity1_bb_coords, entity2_bb_coords, entity1_bb_vdw, entity2_bb_vdw, bb_multiplier) == True:
+        return True
+
+    entity1_sc_coords = np.array([atom.get_coord() for atom in entity1_sc_atoms])
+    entity2_sc_coords = np.array([atom.get_coord() for atom in entity2_sc_atoms])
+
+    entity1_sc_vdw = np.array([vdw[atom.element.lower()] for atom in entity1_sc_atoms])
+    entity2_sc_vdw = np.array([vdw[atom.element.lower()] for atom in entity2_sc_atoms])
+
+    if calculate_clashes(entity1_sc_coords, entity2_sc_coords, entity1_sc_vdw, entity2_sc_vdw, sc_multiplier) == True:
+        return True
+    else:
+        return False
 
 def main(args):
 

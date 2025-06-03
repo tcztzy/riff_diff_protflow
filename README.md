@@ -29,63 +29,59 @@ cd riff_diff_protflow
 cp database/potentials.py /path/to/RFdiffusion/rfdiffusion/potentials/potentials.py
 ```
 
-If you want to experiment with the fragment picking pipeline, you need to download the fragment database from XYZ (optional).
+If you want to experiment with the fragment picking pipeline, you need to download the fragment database from https://zenodo.org/records/15482348 and save it at /riff_diff_protflow/database/fraglib_noscore.pkl.
 
 
 # MANUAL
 
-The riff-diff pipeline is divided into 3 major scripts:
-  1) generation of fragments for a provided theozyme (identify_fragments.py)
-  2) assembly of these fragments into a motif library (assemble_motif_library.py)
-  3) generation of structures and refinement (structure_generation.py)
+The riff-diff pipeline is divided into 2 major scripts:
+  1) generation of fragments for a provided theozyme to create a motif library (create_fragment_library.py)
+  2) generation of structures and refinement (structure_generation.py)
 This manual will walk you through each of these steps to create proficient de novo enzymes or small molecule binders.
 
-# FRAGMENT IDENTIFICATION
+# MOTIF LIBRARY CREATION
 
 For each of the active site residues in the theozyme, fragments will be created by inverting the rotamers and attaching a backbone fragment. The fragments are mainly selected based on rotamer preference.
+A complete output for the generation of the motif library using the example input can be downloaded from https://doi.org/10.5281/zenodo.15588352. 
 
-An example command to run fragment_identification.py can be found in the examples folder. Make sure to run this command having the python environment of riff_diff activated that has protflow installed. The command is written to be run from the riff_diff_protflow root directory:
+An example command to run create_fragment_library.py can be found in the examples folder. Make sure to run this command having the python environment of riff_diff activated that has protflow installed. This script uses either cmd-line arguments or a json file as input. An example json file can be found at riff_diff_protflow/examples/inputs/in.json. You can run the script using motif_library_generation.sh. Depending on the number of fragments that are found, this script can generate several GB of data!
 
 ```
-./examples/fragment_identification.sh
+cd examples
+sbatch motif_library_generation.sh
 ```
 
-By default, the backbone fragment consists of a 7-residue idealized helical fragment, but this can be replaced by custom fragments if desired using the --fragment_pdb flag. The mandatory inputs for fragment identification (identify_fragments.py) are:
+By default, the backbone fragment consists of a 7-residue idealized helical fragment, but this can be replaced by custom fragments if desired using the --fragment_pdb flag. The mandatory inputs are:
   - --riff_diff_dir: required to find paths to database etc
   - --theozyme_pdb: path to the theozyme input
-  - --theozyme_resnums: comma-separated list of all active site residues with chain information that should be present in the catalytic motif (e.g. 25A,38A,188B)
+  - --theozyme_resnums: list of all active site residues with chain information that should be present in the catalytic motif
   - --working_dir: directory where all output will be saved
-  - --output_prefix: to run different settings in the same working directory, can be any string
-  - --ligands: comma-separated list of all ligand residues with chain information that should be present in the catalytic motif (e.g. X188,Z1)
-If you want to modify some options just for certain residues, you can run these separately using the same output directory and prefix.
-Other important flags include:  
+  - --ligands: list of all ligand residues with chain information that should be present in the catalytic motif
+You can specify these commands on the cmd-line, but using an input json offers more flexibility as each option can be set for a specific residue (see the example file in.json). Important options are:
   - --add_equivalent_func_groups: if one of the catalytic residues is ASP/ASN/ILE, also create fragments with GLU/GLN/VAL
-  - --channel_chain: Riff-Diff uses a placeholder fragment to ensure binding pocket formation. If you want to provide a custom channel, provide the chain name
-                                  of the respective chain in the theozyme pdb
   - --rotamer_position: select position of the active site residue on the backbbone fragment (by default, all positions except for N- and C-terminus of the fragment are selected)
-
-Instead of providing a predefined backbone fragment, Riff-Diff can also search the PDB for the most appropriate fragments based on rotamer and backbone occurrences using the flag --pick_frags_from_db. You need to download the fragment library from (insert_link_here) first and place it in the Riff-Diff database folder. This will result in fragments with higher rotamer probabilities, however these fragments typically yield worse output in the subsequent diffusion steps compared to the default idealized helix fragment. It is still experimental and not recommended!
-
-After running the script, all selected fragments can be found in the output directory, together with some information about the selected rotamers and fragments in the respective subfolders.
-
-# MOTIF LIBRARY ASSEMBLY
-
-In the next step, fragments from all active site residues will be combined to create an active site motif (assemble_motif_library.py). Motifs with clashes will be removed automatically. The input is specified using the flag --input_dir, it should point to the output directory of the previous step (the folder containing .pdb and .json files for each active site residue). All .json files in this directory will be read in automatically. You also need to specifiy a working directory (this can be the same as the previous working directory) using --working_dir.
-Other important options are:
-  - --channel_path: replaces the default channel with the channel from this pdb
+  - --custom_channel_path: replaces the default channel with the channel from this pdb
   - --channel_chain: in which chain the channel in the pdb at channel_path is found
   - --preserve_channel_coordinates: preserves the coordinates of the custom channel instead of automatically placing it
-  - --no_channel_placeholder: do not add a channel
 
-The main output of this script are multiple pdb files containing the active site motifs in the folder working_dir/motif_library_assembly/motif_library. This script will also create a .params for use in Rosetta in the ligand directory and a .json file in the working directory called selected_paths.json. This is the main input for the next step.
+If fragment generation fails, this is often due to clashes being detected. You can decrease the Van-der-Waals-multiplier to make clash detection less strict by setting the option --rot_lig_clash_vdw_multiplier to a lower value.
+Instead of providing a predefined backbone fragment, Riff-Diff can also search the PDB for the most appropriate fragments based on rotamer and backbone occurrences using the flag --pick_frags_from_db. You need to download the fragment library from https://doi.org/10.5281/zenodo.15482348 first and place it in the Riff-Diff database folder. This will result in fragments with higher rotamer probabilities, however these fragments typically yield worse output in the subsequent diffusion steps compared to the default idealized helix fragment.
 
-# PROTEIN GENERATION
+After running the script, two folders have been created in the output directory: fragments and motif_library_assembly. The folder fragments contains one multimodel PDB for each active site residue and additional information on selected fragments and rotamers. The folder motif_library_assembly contains the top motifs that passed clash detection and a folder called ligands. In this folder, the Rosetta .params files can be found for each selected ligand. These files can be manually modified, if needed. In the working directory, a a file called selected_paths.json contains information on all selected motifs. This file is the input for the next step, structure generation.
 
-Protein generation proceeds in several stages, all bundled within the structure_generation.py script. Specifying a working directory (--working_dir) is mandatory for all.
+
+# STRUCTURE GENERATION
+
+Structure generation proceeds in several stages, all bundled within the structure_generation.py script. Specifying a working directory (--working_dir) is mandatory for all. A complete output using the example input can be downloaded from https://doi.org/10.5281/zenodo.15588352. The example script can be started like this:
+
+```
+cd examples
+sbatch structure_generation.sh
+```
 
 ## Stage 1: Screening
 
-During the screening stage, individual fragments within the .pdbs of the motif library will be connected by RFdiffusion. Sequences are generated using a combination of ProteinMPNN and Rosetta Relax, which are then predicted via ESMFold. You need to specify an input .json file (--screen_input_json), this is usually the output of the previous step (selected_paths.json).
+During the screening stage, individual fragments within the .pdbs of the motif library will be connected by RFdiffusion. Sequences are generated using a combination of LigandMPNN and Rosetta Relax, which are then predicted via ESMFold. You need to specify an input .json file (--screen_input_json), this is usually the output of the previous step (selected_paths.json).
 Different RFdiffusion settings will be sampled according to the flags --screen_decentralize_weights (influences the strength of the custom ROG potential, higher = stronger) and --screen_decentralize_distances (places the center of the denoising trajectory along an axis from the center of the motif in the direction of the channel). Increasing the decentralize weights leads to more globular, compact proteins, but increasing it too far results in implausible backbones. If your screening output structures have very exposed active sites, it is recommended to increase the decentralize distances, if the substrate is too buried, it is generally recommended to decrease them. You can also set the center of the denoising trajectory manually, by providing coordinates to the --recenter flag.
 Other important flags are:
   - --screen_input_poses: determines how many motifs of the motif library are selected as input for rfdiffusion.
@@ -107,16 +103,16 @@ In this stage, the screening output is iteratively refined by cycling sequence o
   - --ref_cycles: number of iterations for sequence optimization-backbone optimization-sequence-optimization-structure prediction.
   - --ref_input_poses: recommended to look at the screening output to determine how many structures are actually worth refining and select the number of input poses based on that.
 The various filter steps can be adjusted via --ref_catres_bb_rmsd_cutoff_start/--ref_catres_bb_rmsd_cutoff_end, --ref_plddt_cutoff_start/--ref_plddt_cutoff_end. Filter values are ramped with each cycle, start and end values correspond to the first and last cycle.
-You can again pause the script using --skip_evaluation. Due to prediction with AF2, evaluation is quite time-consuming. The refinement output is found in the XYZ and can again be viewed in pymol by running the script align_results.pml.
+You can again pause the script using --skip_evaluation. The refinement output is found in the refinement_results folder and can again be viewed in pymol by running the script align_results.pml. This folder also contains various plots for design parameters over the individual refinement cycles.
 
 ## Stage 3: Evaluation
 
 The refined structures are predicted using AF2 and evaluated by various metrics. If --skip_evaluation was set in the previous stage, you can provide the refinement output with --eval_input_json.
   - --eval_input_poses: define based on number of promising refinement structures.
-The output is is XYZ.
+The output is in the folder evaluation_results and can be viewed via algin_results.pml.
 
 ## Stage 4: Diversification
-This is an optional stage. It is used to diversify sequences for successful backbones and to fine-tune active sites. You can manually provide a list of mutations you want to introduce for each input structure (for instance, to open channels that are blocked by a sidechain).
+This is an optional stage. It is used to diversify sequences for successful backbones and to fine-tune active sites. You can manually provide a list of mutations you want to introduce for each input structure (for instance, to open channels that are blocked by a sidechain). This can be done using the mutations_blank.csv in the evaluation_results folder. In the column omit_AAs, residue positions that should not have the selected amino acid can be provided. In the column allow_AAs, all allowed amino acids at the specified positions can be provided. e.g.: A37:R;A118:YWF in the omit_AAs column will prevent an arginine residue at position 37 and a tyrosine, tryptophane or phenylalanine at position 118. A12:AGST in the column allow_AAs will only allow an alanine, glycine, serine or threonine at position 12. By default, LigandMPNN is used to create diversified sequences. As an alternative, coupled moves can be employed (using the flag --variants_run_cm). The output of variants generation run can be found in the variants_results folder.
 
 
 # DISCLAIMER
