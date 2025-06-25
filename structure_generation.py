@@ -31,7 +31,7 @@ from protflow.metrics.generic_metric_runner import GenericMetric
 from protflow.metrics.ligand import LigandClashes, LigandContacts
 from protflow.metrics.rmsd import BackboneRMSD, MotifRMSD, MotifSeparateSuperpositionRMSD
 import protflow.tools.rosetta
-from protflow.utils.biopython_tools import renumber_pdb_by_residue_mapping, load_structure_from_pdbfile, save_structure_to_pdbfile, load_sequence_from_fasta
+from protflow.utils.biopython_tools import renumber_pdb_by_residue_mapping, load_structure_from_pdbfile, save_structure_to_pdbfile, get_sequence_from_pose, load_sequence_from_fasta
 import protflow.utils.plotting as plots
 from protflow.tools.residue_selectors import DistanceSelector
 
@@ -612,7 +612,8 @@ def create_coupled_moves_sequences(output_dir, cm_resultsdir, poses_df, occurenc
         for _, row in poses_df.iterrows():
             statsdict = statsfiles_to_json(cm_resultsdir, row['poses_description'], os.path.join(cm_resultsdir, f"{row['poses_description']}.json"))
             mutations = generate_mutations_dict(statsdict, occurence_cutoff)
-            seq = list(load_sequence_from_fasta(row["eval_fasta_conversion_fasta_location"]).seq)
+            seq = list(get_sequence_from_pose(load_structure_from_pdbfile(row["poses"]))) # has to be loaded directly, otherwise running cm on cm output again will not work
+            #seq = list(load_sequence_from_fasta(row["eval_fasta_conversion_fasta_location"]).seq)
             variants_df = pd.DataFrame(generate_variants(mutations, seq), columns=[f'cm_sequences'])
             variants_df["poses_description"] = row["poses_description"]
             variants_df = variants_df.merge(poses_df, on="poses_description", how="left")
