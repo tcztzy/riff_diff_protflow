@@ -21,19 +21,17 @@ import protflow.tools.colabfold
 import protflow.tools.esmfold
 import protflow.tools.ligandmpnn
 import protflow.tools.attnpacker
-import protflow.metrics.rmsd
 import protflow.metrics.tmscore
 import protflow.tools.protein_edits
 import protflow.tools.rfdiffusion
-from protflow.poses import Poses, description_from_path
+from protflow.poses import Poses
 from protflow.residues import ResidueSelection
 from protflow.metrics.generic_metric_runner import GenericMetric
 from protflow.metrics.ligand import LigandClashes, LigandContacts
 from protflow.metrics.rmsd import BackboneRMSD, MotifRMSD, MotifSeparateSuperpositionRMSD
 import protflow.tools.rosetta
-from protflow.utils.biopython_tools import renumber_pdb_by_residue_mapping, load_structure_from_pdbfile, save_structure_to_pdbfile, get_sequence_from_pose, load_sequence_from_fasta
+from protflow.utils.biopython_tools import renumber_pdb_by_residue_mapping, load_structure_from_pdbfile, save_structure_to_pdbfile, get_sequence_from_pose
 import protflow.utils.plotting as plots
-from protflow.tools.residue_selectors import DistanceSelector
 
 
 def write_pymol_alignment_script(df:pd.DataFrame, scoreterm: str, top_n:int, path_to_script: str, ascending=True,
