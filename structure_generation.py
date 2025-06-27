@@ -1736,13 +1736,6 @@ def main(args):
         backbones.filter_poses_by_value(score_col=f"variants_esm_tm_TM_score_ref", value=0.9, operator=">=", prefix=f"variants_esm_TM_score", plot=True)
         backbones.filter_poses_by_value(score_col=f"variants_esm_catres_bb_rmsd", value=args.ref_catres_bb_rmsd_cutoff_end, operator="<=", prefix=f"variants_esm_catres_bb", plot=True)
 
-        # repack predictions with attnpacker, if set
-        if args.attnpacker_repack:
-            attnpacker.run(
-                poses=backbones,
-                prefix=f"variants_packing"
-            )
-
         # add ligand to poses
         chain_adder.superimpose_add_chain(
             poses = backbones,
@@ -1788,7 +1781,7 @@ def main(args):
             score_col="variants_esm_composite_score",
             prefix="variants_esm_composite_score_per_bb",
             plot=True,
-            remove_layers=2
+            remove_layers=3
         )
 
         backbones.filter_poses_by_rank(
@@ -1906,10 +1899,10 @@ def main(args):
         trajectory_plots = update_trajectory_plotting(trajectory_plots=trajectory_plots, poses=backbones, prefix="variants_af2")
         eval_trajectory_plots = update_trajectory_plotting(trajectory_plots=eval_trajectory_plots, poses=backbones, prefix="variants_af2")
 
-        backbones.reindex_poses(prefix="variants_af2_reindex", remove_layers=3 if not args.attnpacker_repack else 4)
+        backbones.reindex_poses(prefix="variants_af2_reindex", remove_layers=2 if not args.attnpacker_repack else 3, force_reindex=True)
 
         # filter for unique diffusion backbones
-        backbones.filter_poses_by_rank(n=5, score_col="variants_af2_composite_score", remove_layers=2)
+        backbones.filter_poses_by_rank(n=5, score_col="variants_af2_composite_score", remove_layers=3)
 
         # create output directory
         create_results_dir(poses=backbones, dir=os.path.join(args.working_dir, f"{variants_prefix}variants_results"), score_col="variants_af2_composite_score", plot_cols=variants_af2_scoreterms, rlx_path_col="variants_relaxed_combined_path", create_mutations_csv=True)
