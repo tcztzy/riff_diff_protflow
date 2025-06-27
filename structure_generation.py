@@ -1593,7 +1593,7 @@ def main(args):
         # update trajectory plots
         trajectory_plots = update_trajectory_plotting(trajectory_plots=trajectory_plots, poses=backbones, prefix=f"eval_af2")
 
-        backbones.reindex_poses(prefix="eval_reindex", remove_layers=1 if not args.attnpacker_repack else 2)
+        backbones.reindex_poses(prefix="eval_reindex", remove_layers=1 if not args.attnpacker_repack else 2, force_reindex=True)
 
         eval_results_dir = os.path.join(args.working_dir, f"{eval_prefix}evaluation_results")
         create_results_dir(poses=backbones, dir=eval_results_dir, score_col="eval_composite_score", plot_cols=eval_comp_scoreterms, rlx_path_col="eval_relaxed_combined_path", create_mutations_csv=True)
