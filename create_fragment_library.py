@@ -1304,7 +1304,7 @@ def run_clash_detection(combinations, num_combs, directory, bb_multiplier, sc_mu
     max_num: maximum number of ensembles per slurm task
     directory: output directory
     bb_multiplier: multiplier for clash detection only considering backbone clashes
-    sc_multiplier: multiplier for clash detection, considering sc-sc and bb-sc clashes
+    sc_multiplier: multiplier for clash detection, considering and bb-sc clashes
     database: directory of riffdiff database
     script_path: path to clash_detection.py script
     '''
@@ -1689,6 +1689,12 @@ def main(args):
             # define positions for rotamer insertion
             if res_args.rotamer_positions == "auto":
                 frag_pos_to_replace = [i+1 for i, _ in enumerate(backbone.get_residues())][1:-1]
+            elif isinstance(res_args.rotamer_positions, list):
+                frag_pos_to_replace = res_args.rotamer_positions
+            elif isinstance(res_args.rotamer_positions, int):
+                frag_pos_to_replace = [res_args.rotamer_positions]
+            else:
+                raise KeyError(f"<rotamer_position> for residue {resname} must be 'auto', a list of int, or a single int!")
 
             # extract data from backbone
             backbone_df = create_df_from_fragment(backbone, os.path.basename(fragment_path))
@@ -1779,7 +1785,7 @@ def main(args):
                     log_and_print(f"Could not find fragments for position {pos}.")
                     continue
                 if sec_dict:
-                    if os.path.isfile(filtered_frags := os.path.join(fragment_dir, f"{resname}_database_fragments", "sec_struct_filtered_frags.json")):
+                    if os.path.isfile(filtered_frags := os.path.join(fragment_dir, f"{resname}_database_fragments", f"{pos}_sec_struct_filtered_frags.json")):
                         log_and_print(f"Found previous filter results at {filtered_frags}.")
                         frag_dict[pos] = pd.read_json(filtered_frags)
                     else:
@@ -1832,7 +1838,7 @@ def main(args):
             check_dict = {"selected_frags": [], "selected_frag_dfs": [], "sc_clashes": [], "channel_clashes": 0, "bb_clashes": 0, "rmsd_fails": 0}
             for _, df in frag_dict[pos].groupby('frag_num', sort=False):
                 # check if maximum number of fragments has been reached
-                if len(check_dict["selected_frags"]) >= res_args.max_frags / len(frag_dict):
+                if len(check_dict["selected_frags"]) >= res_args.max_frags_per_residue / len(frag_dict):
                     break
                 frag = create_fragment_from_df(df, pos, AA_alphabet)
                 frag = align_to_sidechain(frag, frag[pos], theozyme_residue, False)
@@ -1878,7 +1884,7 @@ def main(args):
             passed_frags = len(check_dict["selected_frags"])
             if passed_frags < 1:
                 log_and_print(f"Could not find any passing fragments for {chain}{resnum} position {pos}!")
-            log_and_print(f"Found {passed_frags} fragments for position {pos} of a maximum of {res_args.max_frags}.")
+            log_and_print(f"Found {passed_frags} fragments for position {pos} of a maximum of {res_args.max_frags_per_residue / len(frag_dict)}.")
 
             for frag, df in zip(check_dict["selected_frags"], check_dict["selected_frag_dfs"]):
                 rot = df.iloc[pos-1].squeeze()
@@ -1953,7 +1959,6 @@ def main(args):
     in_df = pd.concat(assembly)
 
     ################## CLASH DETECTION ##########################
-
     clash_dir = os.path.join(working_dir, 'clash_check')
     os.makedirs(clash_dir, exist_ok=True)
 
@@ -2145,43 +2150,40 @@ if __name__ == "__main__":
     argparser = argparse.ArgumentParser(formatter_class=argparse.ArgumentDefaultsHelpFormatter)
 
     # mandatory input
-    argparser.add_argument("--riff_diff_dir", default=".", type=str, help="Path to the riff_diff directory. This is workaround and will hopefully be resolved later.")
+    argparser.add_argument("--riff_diff_dir", default=".", type=str, help="Path to the riff_diff directory.")
     argparser.add_argument("--input_json", default=None, type=str, help="Alternative to CLI input. Mandatory for specifying covalent bonds.")
     argparser.add_argument("--theozyme_pdb", type=str, help="Path to pdbfile containing theozyme.")
-    argparser.add_argument("--theozyme_resnums", nargs="+", help="list of residue numbers with chain information (e.g. A25 A38 B188) in theozyme pdb to find fragments for.")
+    argparser.add_argument("--theozyme_resnums", nargs="+", help="List of residue numbers with chain information (e.g. 'A25 A38 B188') in theozyme pdb to find fragments for.")
     argparser.add_argument("--working_dir", type=str, help="Output directory")
     argparser.add_argument("--output_prefix", type=str, default=None, help="Prefix for all output files")
     argparser.add_argument("--ligands", nargs="+", type=str, help="List of ligands in the format 'X188 Z1'.")
     
     # important parameters
     argparser.add_argument("--fragment_pdb", type=str, default=None, help="Path to backbone fragment pdb. If not set, an idealized 7-residue helix fragment is used.")
-    argparser.add_argument("--pick_frags_from_db", action="store_true", help="Select backbone fragments from database instead of providing a specific backbone manually. WARNING: This is much more time consuming and is currently not recommended!")
-    
-    
+    argparser.add_argument("--pick_frags_from_db", action="store_true", help="Select backbone fragments from database instead of providing a specific backbone manually. WARNING: This is much more time consuming!")
     argparser.add_argument("--custom_channel_path", type=str, default=None, help="Use a custom channel placeholder. Must be the path to a .pdb file.")
     argparser.add_argument("--channel_chain", type=str, default=None, help="Chain of the custom channel placeholder (if using a custom channel specified with <custom_channel_path>)")
     argparser.add_argument("--preserve_channel_coordinates", action="store_true", help="Copies channel from channel reference pdb without superimposing on moitf-substrate centroid axis. Useful when channel is present in catalytic array.")
-    argparser.add_argument("--no_channel_placeholder", action="store_true", help="Use a custom channel placeholder. Must be the path to a .pdb file.")
 
     argparser.add_argument("--rotamer_positions", default="auto", nargs='+', help="Position in fragment the rotamer should be inserted, can either be int or a list containing first and last position (e.g. 2,6 if rotamer should be inserted at every position from 2 to 6). Recommended not to include N- and C-terminus! If auto, rotamer is inserted at every position when using backbone finder and in the central location when using fragment finder.")
     argparser.add_argument("--rmsd_cutoff", type=float, default=0.3, help="Set minimum RMSD of output fragments. Increase to get more diverse fragments, but high values might lead to very long runtime or few fragments!")
     argparser.add_argument("--prob_cutoff", type=float, default=0.05, help="Do not return any phi/psi combinations with chi angle probabilities below this value")
-    argparser.add_argument("--add_equivalent_func_groups", action="store_true", help="use ASP/GLU, GLN/ASN and VAL/ILE interchangeably")
+    argparser.add_argument("--add_equivalent_func_groups", action="store_true", help="use ASP/GLU, GLN/ASN and VAL/ILE interchangeably.")
 
     # stuff you might want to adjust
-    argparser.add_argument("--max_frags", type=int, default=100, help="Maximum number of frags that should be returned per active site residue.")
+    argparser.add_argument("--max_frags_per_residue", type=int, default=100, help="Maximum number of fragments that should be returned per active site residue.")
     #argparser.add_argument("--covalent_bonds", type=str, nargs="+", default=None, help="Add covalent bond(s) between residues and ligands in the form 'Res1-Res1Atom:Lig1-Lig1Atom,Res2-Res2Atom:Lig2-Lig2Atom'. Atom names should follow PDB numbering schemes. Example: 'A23-NE2:Z1-C1 A26-OE1:Z1-C11' for two covalent bonds between the NE2 atom of a Histidine at position A23 to C1 atom of ligand Z1 and the OE1 atom of a glutamic acid at A26 to C11 on the same ligand.")
-    argparser.add_argument("--rot_lig_clash_vdw_multiplier", type=float, default=0.8, help="Multiplier for VanderWaals radii for clash detection between rotamer and ligand. Functional groups are not checked! Clash is detected if a distance between atoms < (VdW_radius_atom1 + VdW_radius_atom2)*multiplier.")
-    argparser.add_argument("--bb_lig_clash_vdw_multiplier", type=float, default=1.0, help="Multiplier for VanderWaals radii for clash detection between fragment backbone and ligand. Clash is detected if a distance between atoms < (VdW_radius_atom1 + VdW_radius_atom2)*multiplier.")
-    argparser.add_argument("--channel_frag_clash_vdw_multiplier", type=float, default=1.0, help="Multiplier for VanderWaals radii for clash detection between fragment backbone and channel placeholder. Clash is detected if a distance between atoms < (VdW_radius_atom1 + VdW_radius_atom2)*multiplier.")
+    argparser.add_argument("--rot_lig_clash_vdw_multiplier", type=float, default=0.8, help="Multiplier for Van-der-Waals radii for clash detection between rotamer and ligand. Functional groups are not checked! Clash is detected if a distance between atoms < (VdW_radius_atom1 + VdW_radius_atom2)*multiplier.")
+    argparser.add_argument("--bb_lig_clash_vdw_multiplier", type=float, default=1.0, help="Multiplier for Van-der-Waals radii for clash detection between fragment backbone and ligand. Clash is detected if a distance between atoms < (VdW_radius_atom1 + VdW_radius_atom2)*multiplier.")
+    argparser.add_argument("--channel_frag_clash_vdw_multiplier", type=float, default=1.0, help="Multiplier for Van-der-Waals radii for clash detection between fragment backbone and channel placeholder. Clash is detected if a distance between atoms < (VdW_radius_atom1 + VdW_radius_atom2)*multiplier.")
 
     # options if running in fragment picking mode (<pick_frags_from_db> is set)
     argparser.add_argument("--fragsize", type=int, default=7, help="Size of output fragments. Only used if <pick_frags_from_db> is set.")
-    argparser.add_argument("--rot_sec_struct", type=str, default=None, help="Limit fragments to secondary structure at rotamer position. Provide string of one-letter code of dssp secondary structure elements (B, E, G, H, I, T, S, -), e.g. 'HE' if rotamer should be in helices or beta strands.")
-    argparser.add_argument("--frag_sec_struct_fraction", type=str, default=None, help="Limit to fragments containing at least fraction of residues with the provided secondary structure. If fragment should have at least 50 percent helical residues OR 60 percent beta-sheet, pass 'H:0.5,E:0.6'")
-    argparser.add_argument("--phipsi_occurrence_cutoff", type=float, default=0.5, help="Limit how common the phi/psi combination of a certain rotamer has to be. Value is in percent")
-    argparser.add_argument("--jobstarter", type=str, default="SbatchArray", help="Only relevant if <pick_frags_from_db> is set. Defines if jobs run locally or distributed on a cluster using a protflow jobstarter. Must be one of ['SbatchArray', 'Local'].")
-    argparser.add_argument("--cpus", type=int, default=320, help="Only relevant if <pick_frags_from_db> is set. Defines how many cpus should be used for distributed computing.")
+    argparser.add_argument("--rot_sec_struct", type=str, default=None, help="Limit fragments to secondary structure at rotamer position. Provide string of one-letter code of dssp secondary structure elements (B, E, G, H, I, T, S, -), e.g. 'HE' if rotamer should be in helices or beta strands. Only used if <pick_frags_from_db> is set.")
+    argparser.add_argument("--frag_sec_struct_fraction", type=str, default=None, help="Limit to fragments containing at least fraction of residues with the provided secondary structure. If fragment should have at least 50 percent helical residues OR 60 percent beta-sheet, pass 'H:0.5,E:0.6'. Only used if <pick_frags_from_db> is set.")
+    argparser.add_argument("--phipsi_occurrence_cutoff", type=float, default=0.5, help="Limit how common the phi/psi combination of a certain rotamer has to be. Value is in percent.")
+    argparser.add_argument("--jobstarter", type=str, default="SbatchArray", help="Defines if jobs run locally or distributed on a cluster using a protflow jobstarter. Must be one of ['SbatchArray', 'Local'].")
+    argparser.add_argument("--cpus", type=int, default=60, help="Defines how many cpus should be used for distributed computing.")
     argparser.add_argument("--rotamer_chi_binsize", type=float, default=None, help="Filter for diversifying found rotamers. Lower numbers mean more similar rotamers will be found. Similar rotamers will still be accepted if their backbone angles are different. Recommended value: 15")
     argparser.add_argument("--rotamer_phipsi_binsize", type=float, default=None, help="Filter for diversifying found rotamers. Lower numbers mean similar rotamers from more similar backbone angles will be accepted. Recommended value: 50")
 
@@ -2200,7 +2202,7 @@ if __name__ == "__main__":
     # stuff you might want to adjust
     argparser.add_argument("--max_paths_per_ensemble", type=int, default=None, help="Maximum number of paths per ensemble (=same fragments but in different order)")
     argparser.add_argument("--frag_frag_bb_clash_vdw_multiplier", type=float, default=0.9, help="Multiplier for VanderWaals radii for clash detection inbetween backbone fragments. Clash is detected if distance_between_atoms < (VdW_radius_atom1 + VdW_radius_atom2)*multiplier.")
-    argparser.add_argument("--frag_frag_sc_clash_vdw_multiplier", type=float, default=0.8, help="Multiplier for VanderWaals radii for clash detection fragment sidechains. Clash is detected if distance_between_atoms < (VdW_radius_atom1 + VdW_radius_atom2)*multiplier.")
+    argparser.add_argument("--frag_frag_sc_clash_vdw_multiplier", type=float, default=0.8, help="Multiplier for VanderWaals radii for clash detection between fragment sidechains and backbones. Clash is detected if distance_between_atoms < (VdW_radius_atom1 + VdW_radius_atom2)*multiplier.")
     argparser.add_argument("--fragment_score_weight", type=float, default=1, help="Maximum number of cpus to run on")
     argparser.add_argument("--max_out", type=int, default=2000, help="Maximum number of output paths")
 
