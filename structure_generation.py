@@ -1619,7 +1619,6 @@ def main(args):
         # drop all columns containing information about variant runs (to be able to create variants from previous ones)
         if len(var_cols := [col for col in backbones.df.columns if col.startswith("variants")]) > 0:
             backbones.df.drop(var_cols, axis=1, inplace=True)
-        
 
         if args.variants_mutations_csv:
             mutations = pd.read_csv(args.variants_mutations_csv)
@@ -1639,6 +1638,12 @@ def main(args):
 
         if args.variants_input_poses:
             backbones.filter_poses_by_rank(n=args.variants_input_poses, score_col="eval_composite_score")
+
+        # create residue selections
+        residue_cols = ["fixed_residues", "motif_residues", "template_motif", "template_fixedres", "ligand_motif"]
+        for res_col in residue_cols:
+            if not backbones.df[res_col].apply(lambda x: isinstance(x, ResidueSelection)).all():
+                backbones.df[res_col] = [ResidueSelection(motif, from_scorefile=True) for motif in backbones.df[res_col].to_list()]
 
         # add covalent bonds info to poses pre-relax
         backbones = add_covalent_bonds_info(poses=backbones, prefix="variants_bbopt_cov_info", covalent_bonds_col="covalent_bonds")
@@ -1900,7 +1905,7 @@ def main(args):
         backbones.reindex_poses(prefix="variants_af2_reindex", remove_layers=2 if not args.attnpacker_repack else 3, force_reindex=True)
 
         # filter for unique diffusion backbones
-        backbones.filter_poses_by_rank(n=5, score_col="variants_af2_composite_score", remove_layers=3)
+        backbones.filter_poses_by_rank(n=5, score_col="variants_af2_composite_score", remove_layers=3, plot=True)
 
         # create output directory
         create_results_dir(poses=backbones, dir=os.path.join(args.working_dir, f"{variants_prefix}variants_results"), score_col="variants_af2_composite_score", plot_cols=variants_af2_scoreterms, rlx_path_col="variants_relaxed_combined_path", create_mutations_csv=True)
