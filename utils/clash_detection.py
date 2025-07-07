@@ -17,47 +17,43 @@ def clash_detection_LRU(entity1, entity2, bb_multiplier:float, sc_multiplier:flo
     database: path to database directory
     '''
 
-    def calculate_clashes(entity1_coords, entity2_coords, entity1_vdw, entity2_vdw, vdw_multiplier):
+    def calculate_clashes(entity1_coords, entity2_coords, entity1_vdw, entity2_vdw, vdw_multiplier1, vdw_multiplier2):
         # Compute pairwise distances using broadcasting
         dgram = np.linalg.norm(entity1_coords[:, np.newaxis] - entity2_coords[np.newaxis, :], axis=-1)
 
-        # calculate distance cutoff for each atom pair, considering VdW radii
-        distance_cutoff = entity1_vdw[:, np.newaxis] + entity2_vdw[np.newaxis, :]
+        # Apply separate VDW multipliers
+        scaled_entity1_vdw = entity1_vdw * vdw_multiplier1
+        scaled_entity2_vdw = entity2_vdw * vdw_multiplier2
 
-        # multiply distance cutoffs with set parameter
-        distance_cutoff = distance_cutoff * vdw_multiplier
+        # Compute distance cutoff matrix
+        distance_cutoff = scaled_entity1_vdw[:, np.newaxis] + scaled_entity2_vdw[np.newaxis, :]
 
-        # compare distances to distance_cutoff
+        # Check if any distances are below the cutoff (i.e., clash)
         check = dgram - distance_cutoff
 
         if np.any(check < 0):
             return True
         else:
             return False
+        
+    def split_atoms(entity, backbone_atoms):
+        # ugly, but should be faster because only iterating once
+        bb_atoms = []
+        sc_atoms = []
+        for atom in entity.get_atoms():
+            if atom.element == "H":
+                continue
+            if atom.id in backbone_atoms:
+                bb_atoms.append(atom)
+            else:
+                sc_atoms.append(atom)
+        return bb_atoms, sc_atoms
 
     backbone_atoms = ['CA', 'C', 'N', 'O']
     vdw = json.loads(vdw)
 
-    # ugly, but should be faster because only iterating once
-    entity1_bb_atoms = []
-    entity1_sc_atoms = []
-    for atom in entity1.get_atoms():
-        if atom.element == "H":
-            continue
-        if atom.id in backbone_atoms:
-            entity1_bb_atoms.append(atom)
-        else:
-            entity1_sc_atoms.append(atom)
-
-    entity2_bb_atoms = []
-    entity2_sc_atoms = []
-    for atom in entity2.get_atoms():
-        if atom.element == "H":
-            continue
-        if atom.id in backbone_atoms:
-            entity2_bb_atoms.append(atom)
-        else:
-            entity2_sc_atoms.append(atom)
+    entity1_bb_atoms, entity1_sc_atoms = split_atoms(entity1, backbone_atoms)
+    entity2_bb_atoms, entity2_sc_atoms = split_atoms(entity2, backbone_atoms)
 
     entity1_bb_coords = np.array([atom.get_coord() for atom in entity1_bb_atoms])
     entity2_bb_coords = np.array([atom.get_coord() for atom in entity2_bb_atoms])
@@ -65,7 +61,8 @@ def clash_detection_LRU(entity1, entity2, bb_multiplier:float, sc_multiplier:flo
     entity1_bb_vdw = np.array([vdw[atom.element.lower()] for atom in entity1_bb_atoms])
     entity2_bb_vdw = np.array([vdw[atom.element.lower()] for atom in entity2_bb_atoms])
 
-    if calculate_clashes(entity1_bb_coords, entity2_bb_coords, entity1_bb_vdw, entity2_bb_vdw, bb_multiplier) == True:
+    # evaluate bb-bb clashes
+    if calculate_clashes(entity1_bb_coords, entity2_bb_coords, entity1_bb_vdw, entity2_bb_vdw, bb_multiplier, bb_multiplier) == True:
         return True
 
     entity1_sc_coords = np.array([atom.get_coord() for atom in entity1_sc_atoms])
@@ -74,7 +71,12 @@ def clash_detection_LRU(entity1, entity2, bb_multiplier:float, sc_multiplier:flo
     entity1_sc_vdw = np.array([vdw[atom.element.lower()] for atom in entity1_sc_atoms])
     entity2_sc_vdw = np.array([vdw[atom.element.lower()] for atom in entity2_sc_atoms])
 
-    if calculate_clashes(entity1_sc_coords, entity2_sc_coords, entity1_sc_vdw, entity2_sc_vdw, sc_multiplier) == True:
+    # evaluate bb-sc and sc-sc clashes
+    if calculate_clashes(entity1_bb_coords, entity2_sc_coords, entity1_bb_vdw, entity2_sc_vdw, bb_multiplier, sc_multiplier) == True:
+        return True
+    elif calculate_clashes(entity1_sc_coords, entity2_bb_coords, entity1_sc_vdw, entity2_bb_vdw, sc_multiplier, bb_multiplier) == True:
+        return True
+    elif calculate_clashes(entity1_sc_coords, entity2_sc_coords, entity1_sc_vdw, entity2_sc_vdw, sc_multiplier, sc_multiplier) == True:
         return True
     else:
         return False
