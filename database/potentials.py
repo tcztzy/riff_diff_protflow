@@ -260,7 +260,7 @@ class olig_contacts(Potential):
                 assert contact_matrix[i,j] == contact_matrix[j,i]
         self.nchain=shape[0]
 
-         
+
     def _get_idx(self,i,L):
         """
         Returns the zero-indexed indices of the residues in chain i
@@ -303,10 +303,24 @@ class olig_contacts(Potential):
                     #                 contacts              attr/repuls          relative weights 
                     all_contacts += ncontacts.sum() * self.contact_matrix[i,j] * scalar 
 
-        return all_contacts 
-    
-######################### CUSTOM POTENTIALS ########################
+        return all_contacts
 
+######################### CUSTOM POTENTIALS ########################
+def retain_trailing_true(mask: torch.Tensor) -> torch.Tensor:
+    '''Keeps only the trailing TRUE bools in a mask. This is supposed to select the channel chain for channel centorid calculation.'''
+    # Create a tensor of the same shape initialized to False
+    result = torch.zeros_like(mask, dtype=torch.bool)
+
+    # Iterate from the end to find the last segment of True values
+    found_false = False
+    for i in range(len(mask) - 1, -1, -1):
+        if not mask[i]:
+            if found_false:
+                break
+        else:
+            found_false = True
+            result[i] = True
+    return result
 class custom_recenter_ROG(Potential):
     '''
         Implements recentering away from motif centroid. 
@@ -321,15 +335,15 @@ class custom_recenter_ROG(Potential):
             self.recenter_xyz = torch.tensor([float(rc_x), float(rc_y), float(rc_z)])
         else:
             self.recenter_xyz = None
-    
+
     def compute(self, xyz):
         # get Ca and calculate centroid
         diffusion_mask = mask_expand(self.diffusion_mask, 1)
         Ca = xyz[~diffusion_mask, 1]
 
         # get motif_cen
-        #motif_ca = xyz[diffusion_mask, 1]
-        #motif_cen = torch.mean(motif_ca, dim=0, keepdim=True)
+        motif_ca = xyz[diffusion_mask, 1]
+        motif_cen = torch.mean(motif_ca, dim=0, keepdim=True)
 
         # get channel_cen
         channel_ca = xyz[retain_trailing_true(diffusion_mask), 1]
