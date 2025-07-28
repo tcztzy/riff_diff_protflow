@@ -1,133 +1,108 @@
 import os
 import json
-from functools import lru_cache
-import itertools
-from Bio.PDB import *
+import numpy as np
 import pandas as pd
-
+from Bio.PDB import *
 from protflow.utils.utils import vdw_radii
 from protflow.utils.biopython_tools import load_structure_from_pdbfile
 
-@lru_cache(maxsize=10000000)
-def clash_detection_LRU(entity1, entity2, bb_multiplier:float, sc_multiplier:float, vdw:dict):
-    '''
-    checks for clashes by comparing VanderWaals radii. If clashes with ligand should be detected, set ligand to true. Ligand chain must be added as second entity.
-    bb_only: only detect backbone clashes between to proteins or a protein and a ligand.
-    clash_detection_vdw_multiplier: multiply Van der Waals radii with this value to set clash detection limits higher/lower
-    database: path to database directory
-    '''
 
-    def calculate_clashes(entity1_coords, entity2_coords, entity1_vdw, entity2_vdw, vdw_multiplier1, vdw_multiplier2):
-        # Compute pairwise distances using broadcasting
-        dgram = np.linalg.norm(entity1_coords[:, np.newaxis] - entity2_coords[np.newaxis, :], axis=-1)
+def clash_detection(entity1, entity2, bb_multiplier: float, sc_multiplier: float, vdw: dict):
+    def calculate_clashes(coords1, coords2, vdw1, vdw2, mult1, mult2):
+        dgram = np.linalg.norm(coords1[:, np.newaxis] - coords2[np.newaxis, :], axis=-1)
+        cutoff = vdw1[:, np.newaxis] * mult1 + vdw2[np.newaxis, :] * mult2
+        return np.any(dgram < cutoff)
 
-        # Apply separate VDW multipliers
-        scaled_entity1_vdw = entity1_vdw * vdw_multiplier1
-        scaled_entity2_vdw = entity2_vdw * vdw_multiplier2
-
-        # Compute distance cutoff matrix
-        distance_cutoff = scaled_entity1_vdw[:, np.newaxis] + scaled_entity2_vdw[np.newaxis, :]
-
-        # Check if any distances are below the cutoff (i.e., clash)
-        check = dgram - distance_cutoff
-
-        if np.any(check < 0):
-            return True
-        else:
-            return False
-        
-    def split_atoms(entity, backbone_atoms):
-        # ugly, but should be faster because only iterating once
-        bb_atoms = []
-        sc_atoms = []
+    def split_atoms(entity, bb_ids):
+        bb_atoms, sc_atoms = [], []
         for atom in entity.get_atoms():
             if atom.element == "H":
                 continue
-            if atom.id in backbone_atoms:
-                bb_atoms.append(atom)
-            else:
-                sc_atoms.append(atom)
+            (bb_atoms if atom.id in bb_ids else sc_atoms).append(atom)
         return bb_atoms, sc_atoms
 
     backbone_atoms = ['CA', 'C', 'N', 'O']
-    vdw = json.loads(vdw)
+    entity1_bb, entity1_sc = split_atoms(entity1, backbone_atoms)
+    entity2_bb, entity2_sc = split_atoms(entity2, backbone_atoms)
 
-    entity1_bb_atoms, entity1_sc_atoms = split_atoms(entity1, backbone_atoms)
-    entity2_bb_atoms, entity2_sc_atoms = split_atoms(entity2, backbone_atoms)
+    vdw1_bb = np.array([vdw[atom.element.lower()] for atom in entity1_bb])
+    vdw2_bb = np.array([vdw[atom.element.lower()] for atom in entity2_bb])
 
-    entity1_bb_coords = np.array([atom.get_coord() for atom in entity1_bb_atoms])
-    entity2_bb_coords = np.array([atom.get_coord() for atom in entity2_bb_atoms])
+    coords1_bb = np.array([atom.get_coord() for atom in entity1_bb])
+    coords2_bb = np.array([atom.get_coord() for atom in entity2_bb])
 
-    entity1_bb_vdw = np.array([vdw[atom.element.lower()] for atom in entity1_bb_atoms])
-    entity2_bb_vdw = np.array([vdw[atom.element.lower()] for atom in entity2_bb_atoms])
+    if not entity1_bb or not entity2_bb:
+        raise ValueError("Backbone atoms missing in one of the inputs!")
+
+    if coords1_bb.size == 0 or coords2_bb.size == 0:
+        raise ValueError("Empty backbone coordinate array!")
 
     # evaluate bb-bb clashes
-    if calculate_clashes(entity1_bb_coords, entity2_bb_coords, entity1_bb_vdw, entity2_bb_vdw, bb_multiplier, bb_multiplier) == True:
+    if calculate_clashes(coords1_bb, coords2_bb, vdw1_bb, vdw2_bb, bb_multiplier, bb_multiplier) == True:
         return True
 
-    entity1_sc_coords = np.array([atom.get_coord() for atom in entity1_sc_atoms])
-    entity2_sc_coords = np.array([atom.get_coord() for atom in entity2_sc_atoms])
+    vdw1_sc = np.array([vdw[atom.element.lower()] for atom in entity1_sc])
+    vdw2_sc = np.array([vdw[atom.element.lower()] for atom in entity2_sc])
 
-    entity1_sc_vdw = np.array([vdw[atom.element.lower()] for atom in entity1_sc_atoms])
-    entity2_sc_vdw = np.array([vdw[atom.element.lower()] for atom in entity2_sc_atoms])
+    coords1_sc = np.array([atom.get_coord() for atom in entity1_sc])
+    coords2_sc = np.array([atom.get_coord() for atom in entity2_sc])
 
     # evaluate bb-sc and sc-sc clashes
-    if calculate_clashes(entity1_bb_coords, entity2_sc_coords, entity1_bb_vdw, entity2_sc_vdw, bb_multiplier, sc_multiplier) == True:
+    if calculate_clashes(coords1_bb, coords2_sc, vdw1_bb, vdw2_sc, bb_multiplier, sc_multiplier) == True:
         return True
-    elif calculate_clashes(entity1_sc_coords, entity2_bb_coords, entity1_sc_vdw, entity2_bb_vdw, sc_multiplier, bb_multiplier) == True:
+    elif calculate_clashes(coords1_sc, coords2_bb, vdw1_sc, vdw2_bb, sc_multiplier, bb_multiplier) == True:
         return True
-    elif calculate_clashes(entity1_sc_coords, entity2_sc_coords, entity1_sc_vdw, entity2_sc_vdw, sc_multiplier, sc_multiplier) == True:
+    elif calculate_clashes(coords1_sc, coords2_sc, vdw1_sc, vdw2_sc, sc_multiplier, sc_multiplier) == True:
         return True
     else:
         return False
 
+
 def main(args):
+    # Load pose files (JSON with model/chain info)
+    df1 = pd.read_json(args.pose1)
+    df2 = pd.read_json(args.pose2)
+    vdw = vdw_radii()
 
-    df = pd.read_pickle(args.pkl)
-    # has to be converted because dict is not hashable
-    vdw = json.dumps(vdw_radii())
-    ensemble_out = []
+    # Load all relevant structures
     structdict = {}
+    for pose in set(df1['poses']).union(df2['poses']):
+        structdict[pose] = load_structure_from_pdbfile(pose, all_models=True)
 
-    structs = set(df['poses'].to_list())
-    for i in structs:
-        structdict[i] = load_structure_from_pdbfile(i, all_models=True)
+    results = []
 
-    for ens_num, ensemble in df.groupby('ensemble_num'):
-        for comb in itertools.combinations([row for index, row in ensemble.iterrows()], 2):
-            entity_1 = structdict[comb[0]['poses']][comb[0]['model_num']][comb[0]['chain_id']]
-            entity_2 = structdict[comb[1]['poses']][comb[1]['model_num']][comb[1]['chain_id']]
-            check = clash_detection_LRU(entity_1, entity_2, args.bb_multiplier, args.sc_multiplier, vdw)
-            if check == True:
-                break
-        ensemble['clash_check'] = check
-        ensemble_out.append(ensemble)
-    clash_detection_LRU.cache_clear()
+    for i, row1 in df1.iterrows():
+        ent1 = structdict[row1['poses']][row1['model_num']][row1['chain_id']]
+        for j, row2 in df2.iterrows():
+            ent2 = structdict[row2['poses']][row2['model_num']][row2['chain_id']]
+            clash = clash_detection(ent1, ent2, args.bb_multiplier, args.sc_multiplier, vdw)
+            results.append({
+                'pose1_index': i,
+                'pose2_index': j,
+                'pose1_path': row1['poses'],
+                'pose2_path': row2['poses'],
+                'model1': row1['model_num'],
+                'model2': row2['model_num'],
+                'clash': clash
+            })
 
-    output_dir = os.path.join(args.working_dir, 'scores')
-    os.makedirs(output_dir, exist_ok=True)
-    out_pkl = os.path.join(output_dir, f'ensembles_{args.output_prefix}.pkl')
-
-    ensemble_out = pd.concat(ensemble_out)
-    ensemble_out.to_pickle(out_pkl)
-
-    return ensemble_out
-
+    df_out = pd.DataFrame(results)
+    os.makedirs(args.working_dir, exist_ok=True)
+    out_path = os.path.join(args.working_dir, f"{args.output_prefix}.json")
+    df_out.to_json(out_path, orient='records')
 
 
 if __name__ == "__main__":
     import argparse
+    parser = argparse.ArgumentParser(formatter_class=argparse.ArgumentDefaultsHelpFormatter)
 
-    argparser = argparse.ArgumentParser(formatter_class=argparse.ArgumentDefaultsHelpFormatter)
-    argparser.add_argument("--database_dir", type=str, default="/home/tripp/riffdiff2/riff_diff/database/", help="Path to folder containing rotamer libraries, fragment library, etc.")
-    argparser.add_argument("--working_dir", type=str, required=True, help="Path to working directory")
-    argparser.add_argument("--output_prefix", type=str, required=True, help="Prefix for output files.")
-    argparser.add_argument("--pkl", type=str, required=True, help="Input json files.")
+    parser.add_argument("--pose1", type=str, required=True, help="First input JSON file")
+    parser.add_argument("--pose2", type=str, required=True, help="Second input JSON file")
+    parser.add_argument("--working_dir", type=str, required=True, help="Output directory")
+    parser.add_argument("--output_prefix", type=str, required=True, help="Prefix for output file")
 
-    # stuff you might want to adjust
-    argparser.add_argument("--bb_multiplier", type=float, default=1.5, help="Multiplier for VanderWaals radii for clash detection inbetween backbone fragments. Clash is detected if distance_between_atoms < (VdW_radius_atom1 + VdW_radius_atom2)*multiplier")
-    argparser.add_argument("--sc_multiplier", type=float, default=0.75, help="Multiplier for VanderWaals radii for clash detection between fragment backbones and ligand. Set None if no ligand is present. Clash is detected if distance_between_atoms < (VdW_radius_atom1 + VdW_radius_atom2)*multiplier")
+    parser.add_argument("--bb_multiplier", type=float, default=1.5, help="VDW multiplier for backbone-backbone clashes")
+    parser.add_argument("--sc_multiplier", type=float, default=0.75, help="VDW multiplier for sidechain clashes")
 
-    args = argparser.parse_args()
-
+    args = parser.parse_args()
     main(args)

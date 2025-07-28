@@ -1298,92 +1298,112 @@ def replace_covalent_bonds_chain(chain:str, covalent_bonds:str=None) -> ResidueS
         new_cov_bonds.append(":".join([rechained, lig]))
     return ",".join(new_cov_bonds)
 
-def run_clash_detection(combinations, num_combs, directory, bb_multiplier, sc_multiplier, database, script_path, jobstarter):
-    '''
-    combinations: iterator object that contains pd.Series
-    max_num: maximum number of ensembles per slurm task
-    directory: output directory
-    bb_multiplier: multiplier for clash detection only considering backbone clashes
-    sc_multiplier: multiplier for clash detection, considering and bb-sc clashes
-    database: directory of riffdiff database
-    script_path: path to clash_detection.py script
-    '''
-    ens_json_dir = os.path.join(directory, 'ensemble_pkls')
-    scores_json_dir = os.path.join(directory, 'scores')
-    os.makedirs(ens_json_dir, exist_ok=True)
-    out_pkl = os.path.join(directory, 'clash_detection_scores.pkl')
-    if os.path.isfile(out_pkl):
-        log_and_print(f'Found existing scorefile at {out_pkl}. Skipping step!')
+def run_clash_detection(data, directory, bb_multiplier, sc_multiplier, script_path, jobstarter):
 
-        out_df = pd.read_pickle(out_pkl)
-        return out_df
 
-    max_num = int(num_combs / jobstarter.max_cores)
-    if max_num < 10000:
-        max_num = 10000
+    def write_clash_detection_cmd(pose1, pose2, bb_multiplier, sc_multiplier, script_path, directory, prefix):
+        cmd = f"{os.path.join(PROTFLOW_ENV, 'python')} {script_path} --pose1 {pose1} --pose2 {pose2} --working_dir {directory} --bb_multiplier {bb_multiplier} --sc_multiplier {sc_multiplier} --output_prefix {prefix}"
+        return cmd
 
+    def generate_valid_combinations(n_sets, compat_maps, set_lengths):
+        valid_combos = []
+
+        def backtrack(current_indices, depth):
+            if depth == n_sets:
+                valid_combos.append(tuple(current_indices))
+                return
+
+            for idx in range(set_lengths[depth]):
+                # Check compatibility of this new index with all previous ones
+                is_valid = True
+                for prev_set in range(depth):
+                    prev_idx = current_indices[prev_set]
+                    # Make sure there's an entry
+                    if prev_idx not in compat_maps[prev_set][depth]:
+                        is_valid = False
+                        break
+                    if idx not in compat_maps[prev_set][depth][prev_idx]:
+                        is_valid = False
+                        break
+                if is_valid:
+                    backtrack(current_indices + [idx], depth + 1)
+
+        backtrack([], 0)
+        return valid_combos
     
-    ensemble_num = 0
-    ensemble_nums_toplist = []
-    ensemble_names = []
-    score_names = []
-    ensembles_toplist = []
-    ensembles_list = []
+    in_files = []
+    in_dfs = []
+    for pose, df in data.groupby('poses', sort=False):
+        filename = os.path.join(directory, f"{os.path.splitext(os.path.basename(pose))[0]}.json")
+        df.reset_index(drop=True, inplace=True)
+        df.to_json(filename)
+        in_files.append(filename)
+        in_dfs.append(df)
 
-    for comb in combinations:
-        if ensemble_num % max_num == 0:
-            ensembles_list = []
-            ensembles_toplist.append(ensembles_list)
-            ensemble_nums = []
-            ensemble_nums_toplist.append(ensemble_nums)
-        for series in comb:
-            ensemble_nums.append(ensemble_num)
-            ensembles_list.append(series)
-        ensemble_num += 1
+    log_and_print(in_files)
 
+    set_lengths = [len(df.index) for df in in_dfs]
+    n_sets = len(in_files)
 
-    in_df = []
-    count = 0
-    log_and_print(f'Writing pickles...')
-    for ensembles_list, ensemble_nums in zip(ensembles_toplist, ensemble_nums_toplist):
-        df = pd.DataFrame(ensembles_list).reset_index(drop=True)
-        df['ensemble_num'] = ensemble_nums
-        in_name = os.path.join(ens_json_dir, f'ensembles_{count}.pkl')
-        out_name = os.path.join(scores_json_dir, f'ensembles_{count}.pkl')
-        ensemble_names.append(in_name)
-        score_names.append(out_name)
-        df[['ensemble_num', 'poses', 'model_num', 'chain_id']].to_pickle(in_name)
-        in_df.append(df)
-        count += 1
-    log_and_print(f'Done writing pickles!')
+    cmds = []
+    prefixes = []
+    prefix_map = {}
+    for i, set1 in enumerate(in_files): # iterative over each set
+        for j in range(i+1, n_sets):
+            set2 = in_files[j] # define second set
+            prefixes.append(prefix := f"{os.path.splitext(os.path.basename(set1))[0]}_{os.path.splitext(os.path.basename(set2))[0]}") # create a unique prefix for each pair
+            cmds.append(write_clash_detection_cmd(set1, set2, bb_multiplier, sc_multiplier, script_path, directory, prefix)) # write clash detection cmds
+            prefix_map[prefix] = (i, j)
+    log_and_print(f'Calculating pairwise compatibility maps...')
 
+    jobstarter.start(cmds=cmds, jobname="clash_detection", wait=True, output_path=directory) # distribute clash detection to cluster
 
-    in_df = pd.concat(in_df).reset_index(drop=True)
+    # Build compatibility maps using fast filtering (no row iteration)
+    compat_maps = [[None] * n_sets for _ in range(n_sets)]
 
-    cmds = [f"{os.path.join(PROTFLOW_ENV, 'python')} {script_path} --pkl {json} --working_dir {directory} --bb_multiplier {bb_multiplier} --sc_multiplier {sc_multiplier} --output_prefix {str(index)} --database_dir {database}" for index, json in enumerate(ensemble_names)]
+    log_and_print("Importing results...")
+    # import results
+    for prefix in prefixes:
+        i, j = prefix_map[prefix]
+        filepath = os.path.join(directory, f"{prefix}.json")
+        clash_df = pd.read_json(filepath)
+        filtered_df = clash_df[clash_df["clash"] == False]
 
-    log_and_print(f'Distributing clash detection to cluster...')
+        # Group each pose1_index by its non-clashing pose2_index set
+        a_to_b = filtered_df.groupby("pose1_index")["pose2_index"].agg(set).to_dict()
+        b_to_a = filtered_df.groupby("pose2_index")["pose1_index"].agg(set).to_dict()
 
-    jobstarter.start(cmds=cmds, jobname="clash_detection", wait=True, output_path=directory)
+        compat_maps[i][j] = a_to_b
+        compat_maps[j][i] = b_to_a  # Optional bidirectional support
 
-    log_and_print(f'Reading in clash pickles...')
-    out_df = []
-    for file in score_names:
-        out_df.append(pd.read_pickle(file))
+    log_and_print("Generating valid combinations...")
+    valid_combos = generate_valid_combinations(n_sets, compat_maps, set_lengths)
 
+    if not valid_combos:
+        logging.error("No valid non-clashing combinations found. Adjust parameters like Van-der-Waals multiplier or pick different fragments!")
 
-    #delete input pkls because this folder probably takes a lot of space
-    shutil.rmtree(ens_json_dir)
-    shutil.rmtree(scores_json_dir)
+    log_and_print(f"Found {len(valid_combos)} valid combinations.")
 
-    out_df = pd.concat(out_df)
-    log_and_print(f'Merging with original dataframe...')
-    out_df = out_df.merge(in_df, on=['ensemble_num', 'poses', 'model_num', 'chain_id']).reset_index(drop=True)
-    log_and_print(f'Writing output pickle...')
-    out_df.to_pickle(out_pkl)
-    log_and_print(f'Clash check completed.')
+    valid_combos_arr = np.array(valid_combos)  # shape (num_ensembles, n_sets)
 
-    return out_df
+    log_and_print("Extracting data for each pose...")
+    flattened_dfs = []
+    for i in range(n_sets):
+        indices = valid_combos_arr[:, i].flatten()  # indices from set i
+        df = in_dfs[i].iloc[indices]
+        flattened_dfs.append(df)
+
+    log_and_print("Combining data to ensemble dataframe...")
+    # Combine all into final DataFrame
+    ensemble_df = pd.concat(flattened_dfs, ignore_index=True)
+    ensemble_df["ensemble_num"] = [i for i in range(len(valid_combos))] * n_sets
+    ensemble_df.sort_values("ensemble_num", inplace=True)
+    ensemble_df.reset_index(drop=True, inplace=True)
+
+    #log_and_print("Saving results...")
+    #ensemble_df.to_pickle(os.path.join(directory, "ensembles.pkl"))
+
+    return ensemble_df
 
 def sort_dataframe_groups_by_column(df:pd.DataFrame, group_col:str, sort_col:str, method="mean", ascending:bool=True, filter_top_n:int=None) -> pd.DataFrame:
     # group by group column and calculate mean values
@@ -1959,6 +1979,9 @@ def main(args):
     in_df = pd.concat(assembly)
 
     ################## CLASH DETECTION ##########################
+
+    log_and_print("Fragment selection completed, continuing with clash checks...")
+
     clash_dir = os.path.join(working_dir, 'clash_check')
     os.makedirs(clash_dir, exist_ok=True)
 
@@ -1993,28 +2016,29 @@ def main(args):
     for lig in ligands:
         lig.id = ("H", lig.id[1], lig.id[2])
 
-    grouped_df = pd.concat(df_list).groupby('poses', sort=False)
+    combined = pd.concat(df_list)
+    grouped_df = combined.groupby('poses', sort=False)
 
     # generate every possible combination of input models
     num_models = [len(df.index) for group, df in grouped_df]
     num_combs = 1
     for i in num_models: num_combs *= i
-    log_and_print(f'Generating {num_combs} possible combinations...')
+    log_and_print(f'Generating {num_combs} possible fragment combinations...')
 
     init = time.time()
 
-    combinations = itertools.product(*[[row for _, row in pose_df.iterrows()] for _, pose_df in grouped_df])
+    #combinations = itertools.product(*[[row for _, row in pose_df.iterrows()] for _, pose_df in grouped_df])
     log_and_print(f'Performing pairwise clash detection...')
-    ensemble_dfs = run_clash_detection(combinations=combinations, num_combs=num_combs, directory=clash_dir, bb_multiplier=args.frag_frag_bb_clash_vdw_multiplier, sc_multiplier=args.frag_frag_sc_clash_vdw_multiplier, database=database_dir, script_path=os.path.join(utils_dir, "clash_detection.py"), jobstarter=jobstarter)
+    ensemble_dfs = run_clash_detection(data=combined, directory=clash_dir, bb_multiplier=args.frag_frag_bb_clash_vdw_multiplier, sc_multiplier=args.frag_frag_sc_clash_vdw_multiplier, script_path=os.path.join(utils_dir, "clash_detection.py"), jobstarter=jobstarter)
 
     #calculate scores
     score_df = ensemble_dfs.groupby('ensemble_num', sort=False).mean(numeric_only=True)
     score_df = normalize_col(score_df, 'fragment_score', scale=True, output_col_name='ensemble_score')
-    ensemble_dfs = ensemble_dfs.merge(score_df['ensemble_score'], left_on='ensemble_num', right_index=True).sort_values('ensemble_num').reset_index(drop=True)
+    post_clash = ensemble_dfs.merge(score_df['ensemble_score'], left_on='ensemble_num', right_index=True).sort_values('ensemble_num').reset_index(drop=True)
 
     #remove all clashing ensembles
-    log_and_print(f'Filtering clashing ensembles...')
-    post_clash = ensemble_dfs[ensemble_dfs['clash_check'] == False].reset_index(drop=True)
+    #log_and_print(f'Filtering clashing ensembles...')
+    #post_clash = ensemble_dfs[ensemble_dfs['clash_check'] == False].reset_index(drop=True)
 
 
     log_and_print(f'Completed clash check in {round(time.time() - init, 0)} s.')
@@ -2031,6 +2055,8 @@ def main(args):
     post_clash["ensemble_num"] = post_clash.groupby("ensemble_num", sort=False).ngroup() + 1 
     log_and_print("Sorting completed.")
 
+    """
+    # TODO: plotting not possible anymore, because pre-clash df does not exist anymore due to performance reasons
     # plot data
     plotpath = os.path.join(working_dir, "clash_filter.png")
     log_and_print(f"Plotting data at {plotpath}.")
@@ -2040,7 +2066,7 @@ def main(args):
     col_names = ['mean backbone probability', 'mean rotamer probability', 'mean phi psi occurrence']
     y_labels = ['probability', 'probability', 'probability', 'probability']
     violinplot_multiple_cols_dfs(dfs=dfs, df_names=df_names, cols=cols, titles=col_names, y_labels=y_labels, out_path=plotpath, show_fig=False)
-
+    """
     log_and_print("Creating paths out of ensembles...")
     post_clash['path_score'] = post_clash['ensemble_score']
     post_clash['path_num_matches'] = 0
@@ -2057,10 +2083,14 @@ def main(args):
 
     if args.max_paths_per_ensemble:
         df_list = []
-        for _, df in path_df.groupby('ensemble_num', sort=False):
-            df = sort_dataframe_groups_by_column(df, group_col="path_name", sort_col="path_score", ascending=False, filter_top_n=args.max_paths_per_ensemble)
+        for _, ensembles in path_df.groupby('ensemble_num', sort=False):
+            df = sort_dataframe_groups_by_column(ensembles, group_col="path_name", sort_col="path_score", ascending=False, filter_top_n=args.max_paths_per_ensemble)
             df_list.append(df)
         path_df = pd.concat(df_list)
+
+    ensembles.to_csv("ensembles.csv")
+    df.to_csv("path.csv")
+    log_and_print(df)
 
     # select top n paths
     log_and_print(f"Selecting top {args.max_out} paths...")
