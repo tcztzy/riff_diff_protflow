@@ -1405,9 +1405,14 @@ def run_clash_detection(data, directory, bb_multiplier, sc_multiplier, script_pa
 
     return ensemble_df
 
-def sort_dataframe_groups_by_column(df:pd.DataFrame, group_col:str, sort_col:str, method="mean", ascending:bool=True, filter_top_n:int=None) -> pd.DataFrame:
+def sort_dataframe_groups_by_column(df:pd.DataFrame, group_col:str, sort_col:str, method="mean", ascending:bool=True, filter_top_n:int=None, randomize_ties:bool=False) -> pd.DataFrame:
     # group by group column and calculate mean values
-    df_sorted = df.groupby(group_col, sort=False).agg({sort_col: method}).sort_values(sort_col, ascending=ascending)
+    df_sorted = df.groupby(group_col, sort=False).agg({sort_col: method})
+    if randomize_ties:
+        df_sorted["temp_randomizer"] = np.random.rand(len(df_sorted))
+        df_sorted.sort_values([sort_col, "temp_randomizer"], ascending=ascending, inplace=True)
+    else:
+        df_sorted.sort_values(sort_col, ascending=ascending, inplace=True)
     # filter 
     if filter_top_n:
         df_sorted = df_sorted.head(filter_top_n)
@@ -2084,13 +2089,9 @@ def main(args):
     if args.max_paths_per_ensemble:
         df_list = []
         for _, ensembles in path_df.groupby('ensemble_num', sort=False):
-            df = sort_dataframe_groups_by_column(ensembles, group_col="path_name", sort_col="path_score", ascending=False, filter_top_n=args.max_paths_per_ensemble)
+            df = sort_dataframe_groups_by_column(ensembles, group_col="path_name", sort_col="path_score", ascending=False, filter_top_n=args.max_paths_per_ensemble, randomize_ties=True)
             df_list.append(df)
         path_df = pd.concat(df_list)
-
-    ensembles.to_csv("ensembles.csv")
-    df.to_csv("path.csv")
-    log_and_print(df)
 
     # select top n paths
     log_and_print(f"Selecting top {args.max_out} paths...")
