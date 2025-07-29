@@ -1340,8 +1340,6 @@ def run_clash_detection(data, directory, bb_multiplier, sc_multiplier, script_pa
         in_files.append(filename)
         in_dfs.append(df)
 
-    log_and_print(in_files)
-
     set_lengths = [len(df.index) for df in in_dfs]
     n_sets = len(in_files)
 
@@ -1363,10 +1361,12 @@ def run_clash_detection(data, directory, bb_multiplier, sc_multiplier, script_pa
 
     log_and_print("Importing results...")
     # import results
+    clash_dfs = []
     for prefix in prefixes:
         i, j = prefix_map[prefix]
         filepath = os.path.join(directory, f"{prefix}.json")
         clash_df = pd.read_json(filepath)
+        clash_dfs.append(clash_df)
         filtered_df = clash_df[clash_df["clash"] == False]
 
         # Group each pose1_index by its non-clashing pose2_index set
@@ -1376,10 +1376,24 @@ def run_clash_detection(data, directory, bb_multiplier, sc_multiplier, script_pa
         compat_maps[i][j] = a_to_b
         compat_maps[j][i] = b_to_a  # Optional bidirectional support
 
+        # analyze number of clashes
+        bb_bb_clashes = clash_df["bb_bb_clash"].sum()
+        bb_sc_clashes = clash_df["bb_sc_clash"].sum()
+        sc_sc_clashes = clash_df["sc_sc_clash"].sum()
+        log_and_print(f"Number of clashes for combination {prefix}:\nbackbone-backbone clashes: {bb_bb_clashes}\nbackbone-sidechain clashes: {bb_sc_clashes}\nsidechain-sidechain clashes: {sc_sc_clashes}")
+
+
+    clash_df = pd.concat(clash_dfs)
+    bb_bb_clashes = clash_df["bb_bb_clash"].sum()
+    bb_sc_clashes = clash_df["bb_sc_clash"].sum()
+    sc_sc_clashes = clash_df["sc_sc_clash"].sum()
+    log_and_print(f"Total number of clashes:\nbackbone-backbone clashes: {bb_bb_clashes}\nbackbone-sidechain clashes: {bb_sc_clashes}\nsidechain-sidechain clashes: {sc_sc_clashes}")
+    log_and_print("If number of sidechain clashes is high, this is often a result of missing covalent bonds. Otherwise, <frag_frag_sc_clash_vdw_multiplier> can be reduced.")
+
     log_and_print("Generating valid combinations...")
     valid_combos = generate_valid_combinations(n_sets, compat_maps, set_lengths)
 
-    if not valid_combos:
+    if len(valid_combos) < 1:
         logging.error("No valid non-clashing combinations found. Adjust parameters like Van-der-Waals multiplier or pick different fragments!")
 
     log_and_print(f"Found {len(valid_combos)} valid combinations.")
@@ -1394,7 +1408,7 @@ def run_clash_detection(data, directory, bb_multiplier, sc_multiplier, script_pa
         flattened_dfs.append(df)
 
     log_and_print("Combining data to ensemble dataframe...")
-    # Combine all into final DataFrame
+    # Combine all into final DataFrame (optimized for speed)
     ensemble_df = pd.concat(flattened_dfs, ignore_index=True)
     ensemble_df["ensemble_num"] = [i for i in range(len(valid_combos))] * n_sets
     ensemble_df.sort_values("ensemble_num", inplace=True)
@@ -2060,18 +2074,11 @@ def main(args):
     post_clash["ensemble_num"] = post_clash.groupby("ensemble_num", sort=False).ngroup() + 1 
     log_and_print("Sorting completed.")
 
-    """
-    # TODO: plotting not possible anymore, because pre-clash df does not exist anymore due to performance reasons
-    # plot data
     plotpath = os.path.join(working_dir, "clash_filter.png")
     log_and_print(f"Plotting data at {plotpath}.")
-    dfs = [post_clash.groupby('ensemble_num', sort=False).mean(numeric_only=True), score_df]
-    df_names = ['filtered', 'unfiltered']
-    cols = ['backbone_probability', 'rotamer_probability', 'phi_psi_occurrence']
-    col_names = ['mean backbone probability', 'mean rotamer probability', 'mean phi psi occurrence']
-    y_labels = ['probability', 'probability', 'probability', 'probability']
-    violinplot_multiple_cols_dfs(dfs=dfs, df_names=df_names, cols=cols, titles=col_names, y_labels=y_labels, out_path=plotpath, show_fig=False)
-    """
+    violinplot_multiple_cols(post_clash.groupby('ensemble_num', sort=False).mean(numeric_only=True), cols=['backbone_probability', 'rotamer_probability', 'phi_psi_occurrence'], titles=['mean backbone\nprobability', 'mean rotamer\nprobability', 'mean phi psi\noccurrence'], y_labels=['probability', 'probability', 'probability'], out_path=plotpath, show_fig=False)
+
+
     log_and_print("Creating paths out of ensembles...")
     post_clash['path_score'] = post_clash['ensemble_score']
     post_clash['path_num_matches'] = 0
@@ -2152,7 +2159,7 @@ def main(args):
         ligand_pdbfile = save_structure_to_pdbfile(ligand, lig_path:=os.path.abspath(os.path.join(ligand_dir, f"LG{index+1}.pdb")))
         lig_name = ligand.get_resname()
         ligand_paths.append(lig_path)
-        if len(list(ligand.get_atoms())) > 2:
+        if len(list(ligand.get_atoms())) > 3:
             # store ligand as .mol file for rosetta .molfile-to-params.py
             log_and_print(f"Running 'molfile_to_params.py' to generate params file for Rosetta.")
             lig_molfile = openbabel_fileconverter(input_file=lig_path, output_file=lig_path.replace(".pdb", ".mol2"), input_format="pdb", output_format=".mol2")
@@ -2160,7 +2167,7 @@ def main(args):
             LocalJobStarter().start(cmds=[cmd], jobname="moltoparams", output_path=ligand_dir)
             params_paths.append(lig_path.replace(".pdb", ".params"))
         else:
-            log_and_print(f"Ligand at {ligand_pdbfile} contains less than 3 atoms. No Rosetta Params file can be written for it.")
+            log_and_print(f"Ligand at {ligand_pdbfile} contains less than 4 atoms. No Rosetta Params file can be written for it.")
 
     if params_paths:
         selected_paths["params_path"] = ",".join(params_paths)

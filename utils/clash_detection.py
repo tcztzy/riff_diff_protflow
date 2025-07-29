@@ -39,7 +39,7 @@ def clash_detection(entity1, entity2, bb_multiplier: float, sc_multiplier: float
 
     # evaluate bb-bb clashes
     if calculate_clashes(coords1_bb, coords2_bb, vdw1_bb, vdw2_bb, bb_multiplier, bb_multiplier) == True:
-        return True
+        return (True, 1, 0, 0)
 
     vdw1_sc = np.array([vdw[atom.element.lower()] for atom in entity1_sc])
     vdw2_sc = np.array([vdw[atom.element.lower()] for atom in entity2_sc])
@@ -49,13 +49,13 @@ def clash_detection(entity1, entity2, bb_multiplier: float, sc_multiplier: float
 
     # evaluate bb-sc and sc-sc clashes
     if calculate_clashes(coords1_bb, coords2_sc, vdw1_bb, vdw2_sc, bb_multiplier, sc_multiplier) == True:
-        return True
+        return (True, 0, 1, 0)
     elif calculate_clashes(coords1_sc, coords2_bb, vdw1_sc, vdw2_bb, sc_multiplier, bb_multiplier) == True:
-        return True
+        return (True, 0, 1, 0)
     elif calculate_clashes(coords1_sc, coords2_sc, vdw1_sc, vdw2_sc, sc_multiplier, sc_multiplier) == True:
-        return True
+        return (True, 0, 0, 1)
     else:
-        return False
+        return (False, 0, 0, 0)
 
 
 def main(args):
@@ -75,7 +75,7 @@ def main(args):
         ent1 = structdict[row1['poses']][row1['model_num']][row1['chain_id']]
         for j, row2 in df2.iterrows():
             ent2 = structdict[row2['poses']][row2['model_num']][row2['chain_id']]
-            clash = clash_detection(ent1, ent2, args.bb_multiplier, args.sc_multiplier, vdw)
+            clash, bb_bb_clash, bb_sc_clash, sc_sc_clash = clash_detection(ent1, ent2, args.bb_multiplier, args.sc_multiplier, vdw)
             results.append({
                 'pose1_index': i,
                 'pose2_index': j,
@@ -83,7 +83,10 @@ def main(args):
                 'pose2_path': row2['poses'],
                 'model1': row1['model_num'],
                 'model2': row2['model_num'],
-                'clash': clash
+                'clash': clash,
+                'bb_bb_clash': bb_bb_clash,
+                'bb_sc_clash': bb_sc_clash,
+                'sc_sc_clash': sc_sc_clash
             })
 
     df_out = pd.DataFrame(results)

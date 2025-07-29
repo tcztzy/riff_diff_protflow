@@ -44,7 +44,7 @@ This manual will walk you through each of these steps to create proficient de no
 For each of the active site residues in the theozyme, fragments will be created by inverting the rotamers and attaching a backbone fragment. The fragments are mainly selected based on rotamer preference.
 A complete output for the generation of the motif library using the example input can be downloaded from https://doi.org/10.5281/zenodo.15588352. 
 
-An example command to run create_fragment_library.py can be found in the examples folder. Make sure to run this command having the python environment of riff_diff activated that has protflow installed. This script uses either cmd-line arguments or a json file as input. An example json file can be found at riff_diff_protflow/examples/inputs/in.json. You can run the script using motif_library_generation.sh. Depending on the number of fragments that are found, this script can generate several GB of data!
+An example command to run create_fragment_library.py can be found in the examples folder. Make sure to run this command having the python environment of riff_diff activated that has protflow installed. This script uses either cmd-line arguments or a json file as input. An example json file can be found at riff_diff_protflow/examples/inputs/in.json. You can run the script using motif_library_generation.sh.
 
 ```
 cd examples
