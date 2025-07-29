@@ -1340,8 +1340,6 @@ def run_clash_detection(data, directory, bb_multiplier, sc_multiplier, script_pa
         in_files.append(filename)
         in_dfs.append(df)
 
-    log_and_print(in_files)
-
     set_lengths = [len(df.index) for df in in_dfs]
     n_sets = len(in_files)
 
@@ -1363,10 +1361,12 @@ def run_clash_detection(data, directory, bb_multiplier, sc_multiplier, script_pa
 
     log_and_print("Importing results...")
     # import results
+    clash_dfs = []
     for prefix in prefixes:
         i, j = prefix_map[prefix]
         filepath = os.path.join(directory, f"{prefix}.json")
         clash_df = pd.read_json(filepath)
+        clash_dfs.append(clash_df)
         filtered_df = clash_df[clash_df["clash"] == False]
 
         # Group each pose1_index by its non-clashing pose2_index set
@@ -1376,10 +1376,24 @@ def run_clash_detection(data, directory, bb_multiplier, sc_multiplier, script_pa
         compat_maps[i][j] = a_to_b
         compat_maps[j][i] = b_to_a  # Optional bidirectional support
 
+        # analyze number of clashes
+        bb_bb_clashes = clash_df["bb_bb_clash"].sum()
+        bb_sc_clashes = clash_df["bb_sc_clash"].sum()
+        sc_sc_clashes = clash_df["sc_sc_clash"].sum()
+        log_and_print(f"Number of clashes for combination {prefix}:\nbackbone-backbone clashes: {bb_bb_clashes}\nbackbone-sidechain clashes: {bb_sc_clashes}\nsidechain-sidechain clashes: {sc_sc_clashes}")
+
+
+    clash_df = pd.concat(clash_dfs)
+    bb_bb_clashes = clash_df["bb_bb_clash"].sum()
+    bb_sc_clashes = clash_df["bb_sc_clash"].sum()
+    sc_sc_clashes = clash_df["sc_sc_clash"].sum()
+    log_and_print(f"Total number of clashes:\nbackbone-backbone clashes: {bb_bb_clashes}\nbackbone-sidechain clashes: {bb_sc_clashes}\nsidechain-sidechain clashes: {sc_sc_clashes}")
+    log_and_print("If number of sidechain clashes is high, this is often a result of missing covalent bonds. Otherwise, <frag_frag_sc_clash_vdw_multiplier> can be reduced.")
+
     log_and_print("Generating valid combinations...")
     valid_combos = generate_valid_combinations(n_sets, compat_maps, set_lengths)
 
-    if not valid_combos:
+    if len(valid_combos) < 1:
         logging.error("No valid non-clashing combinations found. Adjust parameters like Van-der-Waals multiplier or pick different fragments!")
 
     log_and_print(f"Found {len(valid_combos)} valid combinations.")
@@ -1394,7 +1408,7 @@ def run_clash_detection(data, directory, bb_multiplier, sc_multiplier, script_pa
         flattened_dfs.append(df)
 
     log_and_print("Combining data to ensemble dataframe...")
-    # Combine all into final DataFrame
+    # Combine all into final DataFrame (optimized for speed)
     ensemble_df = pd.concat(flattened_dfs, ignore_index=True)
     ensemble_df["ensemble_num"] = [i for i in range(len(valid_combos))] * n_sets
     ensemble_df.sort_values("ensemble_num", inplace=True)
