@@ -2074,18 +2074,11 @@ def main(args):
     post_clash["ensemble_num"] = post_clash.groupby("ensemble_num", sort=False).ngroup() + 1 
     log_and_print("Sorting completed.")
 
-    """
-    # TODO: plotting not possible anymore, because pre-clash df does not exist anymore due to performance reasons
-    # plot data
     plotpath = os.path.join(working_dir, "clash_filter.png")
     log_and_print(f"Plotting data at {plotpath}.")
-    dfs = [post_clash.groupby('ensemble_num', sort=False).mean(numeric_only=True), score_df]
-    df_names = ['filtered', 'unfiltered']
-    cols = ['backbone_probability', 'rotamer_probability', 'phi_psi_occurrence']
-    col_names = ['mean backbone probability', 'mean rotamer probability', 'mean phi psi occurrence']
-    y_labels = ['probability', 'probability', 'probability', 'probability']
-    violinplot_multiple_cols_dfs(dfs=dfs, df_names=df_names, cols=cols, titles=col_names, y_labels=y_labels, out_path=plotpath, show_fig=False)
-    """
+    violinplot_multiple_cols(post_clash.groupby('ensemble_num', sort=False).mean(numeric_only=True), cols=['backbone_probability', 'rotamer_probability', 'phi_psi_occurrence'], titles=['mean backbone\nprobability', 'mean rotamer\nprobability', 'mean phi psi\noccurrence'], y_labels=['probability', 'probability', 'probability'], out_path=plotpath, show_fig=False)
+
+
     log_and_print("Creating paths out of ensembles...")
     post_clash['path_score'] = post_clash['ensemble_score']
     post_clash['path_num_matches'] = 0
@@ -2166,7 +2159,7 @@ def main(args):
         ligand_pdbfile = save_structure_to_pdbfile(ligand, lig_path:=os.path.abspath(os.path.join(ligand_dir, f"LG{index+1}.pdb")))
         lig_name = ligand.get_resname()
         ligand_paths.append(lig_path)
-        if len(list(ligand.get_atoms())) > 2:
+        if len(list(ligand.get_atoms())) > 3:
             # store ligand as .mol file for rosetta .molfile-to-params.py
             log_and_print(f"Running 'molfile_to_params.py' to generate params file for Rosetta.")
             lig_molfile = openbabel_fileconverter(input_file=lig_path, output_file=lig_path.replace(".pdb", ".mol2"), input_format="pdb", output_format=".mol2")
@@ -2174,7 +2167,7 @@ def main(args):
             LocalJobStarter().start(cmds=[cmd], jobname="moltoparams", output_path=ligand_dir)
             params_paths.append(lig_path.replace(".pdb", ".params"))
         else:
-            log_and_print(f"Ligand at {ligand_pdbfile} contains less than 3 atoms. No Rosetta Params file can be written for it.")
+            log_and_print(f"Ligand at {ligand_pdbfile} contains less than 4 atoms. No Rosetta Params file can be written for it.")
 
     if params_paths:
         selected_paths["params_path"] = ",".join(params_paths)
