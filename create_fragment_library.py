@@ -503,6 +503,7 @@ def create_fragment_from_df(df:pd.DataFrame, rotamer_position, AA_alphabet):
         chain.add(res)
 
     chain.atom_to_internal_coordinates()
+    
     for index, row in df.iterrows():
         chain[index + 1].internal_coord.set_angle('phi', row['phi'])
         chain[index + 1].internal_coord.set_angle('psi', row['psi'])
@@ -544,7 +545,8 @@ def attach_rotamer_to_backbone(fragment, fragment_residue, rotamer):
     sup.set_atoms(to_mutate_atoms, res_atoms)
     sup.rotran
     sup.apply(rotamer)
-
+    rotamer.detach_child("O")
+    rotamer.add(fragment_residue["O"])
     fragment.insert(rotamer.id[1]-1, rotamer)
 
     return fragment
