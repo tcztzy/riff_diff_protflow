@@ -424,41 +424,51 @@ def atoms_of_functional_groups():
 
 def sort_frags_df_by_score(frags_df, backbone_score_weight, rotamer_score_weight, frag_length):
 
-    # calculate ratio of identical backbone fragments
-    frags_df['backbone_count'] = frags_df.groupby('frag_identifier')['frag_num'].transform('nunique')
-    frags_df['backbone_probability'] = frags_df['backbone_count'] / frags_df['frag_num'].nunique()
+    # calculate number of fragments
+    total_fragments = frags_df['frag_num'].nunique()
+
+    # correct angles for better median calculations
+    for col in ['phi', 'psi', 'omega']:
+        frags_df.loc[frags_df[col] <= -175, col] += 360
 
     df_list = []
     frag_num = 0
-    for identifier, unique_df in frags_df.groupby('frag_identifier', sort=False):
-        rotamer_pos = unique_df.iloc[0, unique_df.columns.get_loc('rotamer_pos')]
-        rotamer_id = unique_df.iloc[0, unique_df.columns.get_loc('rotamer_id')]
-        phis = []
-        psis = []
-        omegas = []
+    for _, unique_df in frags_df.groupby('frag_identifier', sort=False):
+        # access rotamer positions and ids
+        rotamer_pos = unique_df.iat[0, unique_df.columns.get_loc('rotamer_pos')]
+        rotamer_id = unique_df.iat[0, unique_df.columns.get_loc('rotamer_id')]
+
+        # calculate number of similar fragments
+        backbone_count = unique_df['frag_num'].nunique()
+        unique_df["backbone_count"] = backbone_count
+
+        # access indices of each residue 
         indices = [[index + pos for index in range(0, len(unique_df.index), frag_length)] for pos in range(0, frag_length)]
-        for col in ['phi', 'psi', 'omega']:
-            unique_df.loc[unique_df[col] <= -175, col] += 360
-        for index, index_list in enumerate(indices):
+
+        # calculate medians for each residue
+        phis, psis, omegas = [], [], []
+        for index_list in indices:
             df = unique_df.iloc[index_list]                
             phis.append(df['phi'].median())
             psis.append(df['psi'].median())
             omegas.append(df['omega'].median())
-        
+
+        # avoid creating a new df, ugly but faster (iloc is also faster than loc)
         unique_df.iloc[0:frag_length, unique_df.columns.get_loc('AA')] = 'GLY'
-        unique_df.iloc[rotamer_pos - 1, unique_df.columns.get_loc('AA')] = rotamer_id
+        unique_df.iat[rotamer_pos - 1, unique_df.columns.get_loc('AA')] = rotamer_id
         unique_df.iloc[0:frag_length, unique_df.columns.get_loc('phi')] = phis
         unique_df.iloc[0:frag_length, unique_df.columns.get_loc('psi')] = psis
         unique_df.iloc[0:frag_length, unique_df.columns.get_loc('omega')] = omegas
         unique_df.iloc[0:frag_length, unique_df.columns.get_loc('frag_num')] = frag_num
-        
+       
         frag_num += 1
         df_list.append(unique_df.iloc[0:frag_length])
 
     
     frags_df = pd.concat(df_list)
     frags_df.drop(['pdb', 'ss', 'frag_identifier'], axis=1, inplace=True)
-    
+    frags_df['backbone_probability'] = frags_df['backbone_count'] / total_fragments
+
     #sort frags by fragment score
     grouped = frags_df[['frag_num', 'backbone_probability', 'rotamer_score']].groupby('frag_num', sort=False).mean(numeric_only=True)
     grouped['log_backbone_probability'] = np.log(grouped['backbone_probability'])
@@ -647,14 +657,28 @@ def has_consecutive_numbers(df:pd.DataFrame, fragsize):
     if df['position'].diff().sum() + 1 == fragsize: return True
     else: return False
 
-def trim_indices(arr, upper_limit, lower_limit, n):
-    # remove n indices as long as there are indices above upper_limit or below lower limit
-    while arr[-1] > upper_limit:
-        arr = arr[:-n] 
-    while arr[0] < lower_limit:
-        arr = arr[n:]
-    return arr
+def assign_frag_identifier(df, pos):
+    dihedrals = ['phi', 'psi', 'omega']
 
+    # Round and clean dihedrals
+    for angle in dihedrals:
+        df[f"{angle}_rounded"] = df[angle].round(-1).replace(-180, 180).astype(int)
+
+    # Function to create the identifier for each frag_num group
+    def make_identifier(group):
+        dihedral_seq = tuple(zip(group['phi_rounded'], group['psi_rounded'], group['omega_rounded']))  # preserve order
+        rotamer = group['rotamer_index'].iloc[0]
+        return (dihedral_seq, rotamer, pos)
+
+    # Apply group-wise identifier creation
+    identifiers = df.groupby('frag_num', sort=False).apply(make_identifier)
+    identifiers.name = 'frag_identifier'
+    identifiers = identifiers.reset_index()
+
+    # Merge the identifier back to the full DataFrame
+    df = df.merge(identifiers, on='frag_num', how='left')
+
+    return df
 
 def extract_fragments(rotamer_positions_df: pd.DataFrame, fraglib: pd.DataFrame, frag_pos_to_replace: list, fragsize: int, working_dir: str):
     '''
@@ -669,10 +693,10 @@ def extract_fragments(rotamer_positions_df: pd.DataFrame, fraglib: pd.DataFrame,
     rotamer_positions_df["temp_index_for_merge"] = rotamer_positions_df.index
     os.makedirs(working_dir, exist_ok=True)
     for pos in frag_pos_to_replace:
-        # read in previous results if they exist
-        if os.path.isfile(outfile := os.path.join(working_dir, f"fragments_{pos}.json")):
+        # read in previous results if they exist 
+        if os.path.isfile(outfile := os.path.join(working_dir, f"fragments_{pos}.pkl")):
             log_and_print(f"Found previous results at {outfile}.")
-            frags_df = pd.read_json(outfile)
+            frags_df = pd.read_pickle(outfile)
             frag_dict[pos] = frags_df
             continue
 
@@ -688,12 +712,6 @@ def extract_fragments(rotamer_positions_df: pd.DataFrame, fraglib: pd.DataFrame,
             if start >= 0 and end <= fraglib.index.max():
                 all_values.extend(range(start, end))  # Append the range to the list
         indices = np.array(all_values)
-
-        # check if indices are below 0 or above fraglib size
-        #indices = trim_indices(indices, fraglib.index.max(), 0, fragsize)
-
-        log_and_print(indices.max())
-        log_and_print(indices.min())
 
         # extract all indices
         df = fraglib.loc[indices]
@@ -742,11 +760,15 @@ def extract_fragments(rotamer_positions_df: pd.DataFrame, fraglib: pd.DataFrame,
         frags_df['rotamer_pos'] = pos
 
         # assign identifier based on phi/psi/omega angles, rotamer id and rotamer position
+        frags_df = assign_frag_identifier(frags_df, pos)
+
+        """
         frags_l = []
         for _, df in frags_df.groupby("frag_num", sort=False):
             df["frag_identifier"] = create_frag_identifier(df,pos)
             frags_l.append(df)
         frags_df = pd.concat(frags_l)
+        """
 
         # add fragnum so that fragment numbering is continous for next position
         fragnum = fragnum + frags_df['frag_num'].max()
@@ -755,7 +777,7 @@ def extract_fragments(rotamer_positions_df: pd.DataFrame, fraglib: pd.DataFrame,
         frags_df.drop(['temp_index_for_merge', 'temp_pos_for_merge'], axis=1, inplace=True)
         
         # write frags_df to json
-        frags_df.to_json(outfile)
+        frags_df.to_pickle(outfile)
 
         frag_dict[pos] = frags_df
 
@@ -1830,12 +1852,12 @@ def main(args):
                     log_and_print(f"Could not find fragments for position {pos}.")
                     continue
                 if sec_dict:
-                    if os.path.isfile(filtered_frags := os.path.join(fragment_dir, f"{resname}_database_fragments", f"{pos}_sec_struct_filtered_frags.json")):
+                    if os.path.isfile(filtered_frags := os.path.join(fragment_dir, f"{resname}_database_fragments", f"{pos}_sec_struct_filtered_frags.pkl")):
                         log_and_print(f"Found previous filter results at {filtered_frags}.")
-                        frag_dict[pos] = pd.read_json(filtered_frags)
+                        frag_dict[pos] = pd.read_pickle(filtered_frags)
                     else:
                         frag_dict[pos] = filter_frags_df_by_secondary_structure_content(frag_dict[pos], sec_dict)
-                        frag_dict[pos].to_json(filtered_frags)
+                        frag_dict[pos].to_pickle(filtered_frags)
                     log_and_print(f"{int(len(frag_dict[pos]) / res_args.fragsize)} fragments passed secondary structure filtering with filter {res_args.frag_sec_struct_fraction} for position {pos}.")
                 if frag_dict[pos].empty:
                     frag_dict.pop(pos)
