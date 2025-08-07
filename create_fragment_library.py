@@ -2055,30 +2055,38 @@ def main(args):
     #calculate scores
     score_df = ensemble_dfs.groupby('ensemble_num', sort=False).mean(numeric_only=True)
     score_df = normalize_col(score_df, 'fragment_score', scale=True, output_col_name='ensemble_score')
+    log_and_print(f'Found {len(score_df.index)} non-clashing ensembles.')
+
+    plotpath = os.path.join(working_dir, "clash_filter.png")
+    log_and_print(f"Plotting data at {plotpath}.")
+    violinplot_multiple_cols(score_df, cols=['backbone_probability', 'rotamer_probability', 'phi_psi_occurrence'], titles=['mean backbone\nprobability', 'mean rotamer\nprobability', 'mean phi psi\noccurrence'], y_labels=['probability', 'probability', 'probability'], out_path=plotpath, show_fig=False)
+
+    # pre-filtering to reduce df size
+    score_df.sort_values('ensemble_score', ascending=True, inplace=True)
+    score_df_top = score_df.head(args.max_top_out)
+    if args.max_random_out > 0:
+        # drop all previously picked paths
+        remaining_index = score_df.index.difference(score_df_top.index)
+        score_df = score_df.loc[remaining_index]
+        if not score_df.empty:
+            sample_n = min(args.max_random_out, len(score_df))
+            score_df = score_df.sample(n=sample_n, replace=False)
+        score_df = pd.concat([score_df, score_df_top]) # combine with top ensembles
+    else:
+        score_df = score_df_top
+
     post_clash = ensemble_dfs.merge(score_df['ensemble_score'], left_on='ensemble_num', right_index=True).sort_values('ensemble_num').reset_index(drop=True)
-
-    #remove all clashing ensembles
-    #log_and_print(f'Filtering clashing ensembles...')
-    #post_clash = ensemble_dfs[ensemble_dfs['clash_check'] == False].reset_index(drop=True)
-
 
     log_and_print(f'Completed clash check in {round(time.time() - init, 0)} s.')
     if len(post_clash.index) == 0:
         log_and_print(f'No ensembles found! Try adjusting VdW multipliers or pick different fragments!')
         raise RuntimeError(f'No ensembles found! Try adjusting VdW multipliers or pick different fragments!')
 
-    passed = int(len(post_clash.index) / len(chains))
-    log_and_print(f'Found {passed} non-clashing ensembles.')
-
     # sort ensembles by score
     log_and_print("Sorting ensembles by score...")
     post_clash = sort_dataframe_groups_by_column(df=post_clash, group_col="ensemble_num", sort_col="ensemble_score", ascending=False)
     post_clash["ensemble_num"] = post_clash.groupby("ensemble_num", sort=False).ngroup() + 1 
     log_and_print("Sorting completed.")
-
-    plotpath = os.path.join(working_dir, "clash_filter.png")
-    log_and_print(f"Plotting data at {plotpath}.")
-    violinplot_multiple_cols(post_clash.groupby('ensemble_num', sort=False).mean(numeric_only=True), cols=['backbone_probability', 'rotamer_probability', 'phi_psi_occurrence'], titles=['mean backbone\nprobability', 'mean rotamer\nprobability', 'mean phi psi\noccurrence'], y_labels=['probability', 'probability', 'probability'], out_path=plotpath, show_fig=False)
 
 
     log_and_print("Creating paths out of ensembles...")
@@ -2087,7 +2095,7 @@ def main(args):
     
     # filter for top ensembles to speed things up, since paths within an ensemble have the same score
     paths = ["".join(perm) for perm in itertools.permutations(chains)]
-    post_clash = sort_dataframe_groups_by_column(df=post_clash, group_col="ensemble_num", sort_col="path_score", ascending=False, filter_top_n=args.max_out)
+    post_clash = sort_dataframe_groups_by_column(df=post_clash, group_col="ensemble_num", sort_col="path_score", ascending=False)
     dfs = [post_clash.assign(path_name=post_clash['ensemble_num'].astype(str)+"_" + p) for p in paths]
     path_df = pd.concat(dfs, ignore_index=True)
     log_and_print("Done creating paths.")
@@ -2103,10 +2111,29 @@ def main(args):
         path_df = pd.concat(df_list)
 
     # select top n paths
-    log_and_print(f"Selecting top {args.max_out} paths...")
-    top_path_df = sort_dataframe_groups_by_column(df=path_df, group_col="path_name", sort_col="path_score", ascending=False, filter_top_n=args.max_out)
+    log_and_print(f"Selecting top {args.max_top_out} paths...")
+    top_path_df = sort_dataframe_groups_by_column(df=path_df, group_col="path_name", sort_col="path_score", ascending=False, randomize_ties=True, filter_top_n=args.max_top_out)
 
     log_and_print(f"Found {int(len(top_path_df.index)/len(chains))} paths.")
+
+    # select random paths
+    if args.max_random_out > 0:
+        # remove all selected paths
+        log_and_print(f"Selecting random {args.max_top_out} paths...")
+
+        path_df = (
+            path_df
+            .merge(top_path_df[['ensemble_num', 'path_name']], on=['ensemble_num', 'path_name'], how='left', indicator=True)
+            .query('_merge == "left_only"')
+            .drop(columns='_merge')
+        )
+
+        path_df["randomizer_score"] = 0
+        random_path_df = sort_dataframe_groups_by_column(df=path_df, group_col="path_name", sort_col="randomizer_score", ascending=False, randomize_ties=True, filter_top_n=args.max_random_out)
+        log_and_print(f"Found {int(len(random_path_df.index)/len(chains))} random paths.")
+
+        selected_paths = pd.concat([random_path_df, top_path_df])
+    else: selected_paths = top_path_df
 
     # create path dataframe
     log_and_print(f"Creating path dataframe...")
@@ -2121,7 +2148,7 @@ def main(args):
                  'phi_psi_occurrence': [("phi_psi_occurrence", concat_columns), ("phi_psi_occurrence_mean", "mean")],
                  'covalent_bonds': concat_columns}
 
-    selected_paths = top_path_df.groupby('path_name', sort=False).agg(aggregate).reset_index(names=["path_name"])
+    selected_paths = selected_paths.groupby('path_name', sort=False).agg(aggregate).reset_index(names=["path_name"])
     selected_paths.columns = ['path_name', 'poses', 'chain_id', 'model_num', 'rotamer_pos', 'frag_length',
                                'path_score', 'backbone_probability', 'backbone_probability_mean', 'rotamer_probability',
                                'rotamer_probability_mean','phi_psi_occurrence', 'phi_psi_occurrence_mean', 'covalent_bonds']
@@ -2240,11 +2267,12 @@ if __name__ == "__main__":
 
 
     # stuff you might want to adjust
-    argparser.add_argument("--max_paths_per_ensemble", type=int, default=None, help="Maximum number of paths per ensemble (=same fragments but in different order)")
+    argparser.add_argument("--max_paths_per_ensemble", type=int, default=4, help="Maximum number of paths per ensemble (=same fragments but in different order)")
     argparser.add_argument("--frag_frag_bb_clash_vdw_multiplier", type=float, default=0.9, help="Multiplier for VanderWaals radii for clash detection inbetween backbone fragments. Clash is detected if distance_between_atoms < (VdW_radius_atom1 + VdW_radius_atom2)*multiplier.")
     argparser.add_argument("--frag_frag_sc_clash_vdw_multiplier", type=float, default=0.8, help="Multiplier for VanderWaals radii for clash detection between fragment sidechains and backbones. Clash is detected if distance_between_atoms < (VdW_radius_atom1 + VdW_radius_atom2)*multiplier.")
     argparser.add_argument("--fragment_score_weight", type=float, default=1, help="Maximum number of cpus to run on")
-    argparser.add_argument("--max_out", type=int, default=2000, help="Maximum number of output paths")
+    argparser.add_argument("--max_top_out", type=int, default=500, help="Maximum number of top-ranked output paths")
+    argparser.add_argument("--max_random_out", type=int, default=500, help="Maximum number of random-ranked output paths")
 
 
     args = argparser.parse_args()
