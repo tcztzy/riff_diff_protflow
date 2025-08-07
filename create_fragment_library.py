@@ -685,11 +685,15 @@ def extract_fragments(rotamer_positions_df: pd.DataFrame, fraglib: pd.DataFrame,
         # create range between start and end
         all_values = []
         for start, end in zip(index_starts, index_ends):
-            all_values.extend(range(start, end))  # Append the range to the list
+            if start >= 0 and end <= fraglib.index.max():
+                all_values.extend(range(start, end))  # Append the range to the list
         indices = np.array(all_values)
 
         # check if indices are below 0 or above fraglib size
-        indices = trim_indices(indices, fraglib.index.max(), 0, fragsize)
+        #indices = trim_indices(indices, fraglib.index.max(), 0, fragsize)
+
+        log_and_print(indices.max())
+        log_and_print(indices.min())
 
         # extract all indices
         df = fraglib.loc[indices]
@@ -2095,7 +2099,7 @@ def main(args):
     
     # filter for top ensembles to speed things up, since paths within an ensemble have the same score
     paths = ["".join(perm) for perm in itertools.permutations(chains)]
-    post_clash = sort_dataframe_groups_by_column(df=post_clash, group_col="ensemble_num", sort_col="path_score", ascending=False)
+    #post_clash = sort_dataframe_groups_by_column(df=post_clash, group_col="ensemble_num", sort_col="path_score", ascending=False)
     dfs = [post_clash.assign(path_name=post_clash['ensemble_num'].astype(str)+"_" + p) for p in paths]
     path_df = pd.concat(dfs, ignore_index=True)
     log_and_print("Done creating paths.")
