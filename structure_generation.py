@@ -134,7 +134,7 @@ def update_and_copy_reference_frags(input_df: pd.DataFrame, ref_col:str, desc_co
     # renumber
     return [renumber_pdb_by_residue_mapping(ref_frag, res_mapping, out_pdb_path=pdb_output, keep_chain=keep_ligand_chain) for ref_frag, res_mapping, pdb_output in zip(input_df[ref_col].to_list(), list_of_mappings, output_pdb_names_list)]
 
-def instantiate_trajectory_plotting(plot_dir: str, scores: list) -> dict[plots.PlottingTrajectory]: 
+def instantiate_trajectory_plotting(plot_dir: str, scores: list) -> dict[plots.PlottingTrajectory]:
     # instantiate plotting trajectories:
     trajectory_dict = {}
     for score in scores:
@@ -198,12 +198,12 @@ def calculate_mean_scores(poses: Poses, scores: list, remove_layers: int=None):
     return poses
 
 def combine_screening_results(dir: str, prefixes: list, scoreterms: list, weights: list, residue_cols: list, input_motifs: Poses, screen_prefix: str = None,):
-    
+
     logging.info("Combining results from all screening runs...")
 
     if len(prefixes) == 0:
         logging.error("No poses passed in any of the screening runs. Aborting!"); sys.exit(1)
-    
+
     screen_dir = os.path.join(dir, f"{screen_prefix}_screening" if screen_prefix else "screening")
 
     # set up output dir
@@ -271,13 +271,13 @@ def combine_screening_results(dir: str, prefixes: list, scoreterms: list, weight
     successfull_motifs.to_json(os.path.join(out_dir, "successful_input_motifs.json"))
 
     return poses
-    
+
 def ramp_cutoff(start_value, end_value, cycle, total_cycles):
     if total_cycles == 1:
         return end_value
     step = (end_value - start_value) / (total_cycles - 1)
     return start_value + (cycle - 1) * step
-        
+
 
 def split_combined_ligand(poses_dir:str, ligand_paths: list):
     logging.info('Replacing RFdiffusion combined ligand with separated ligands...')
@@ -443,12 +443,12 @@ def pool_all_cycle_results(ref_dict: dict, plddt_cutoff:float, catres_bb_rmsd_cu
         backbones.filter_poses_by_value(score_col="cycle_final_esm_motif_rmsd", value=motif_bb_rmsd_cutoff, operator="<=", fail_on_empty=False)
         if not backbones.df.empty:
             poses_list.append(backbones.df.copy())
-    
+
     # combine all results that passed filters
     backbones.df = pd.concat(poses_list)
     backbones.df.reset_index(inplace=True, drop=True)
     backbones.set_work_dir(refinement_dir)
-    
+
     final_scores = [f"cycle_final_{'_'.join(score.split('_')[2:])}" for score in comp_score_scoreterms]
 
     # calculate new composite score
@@ -456,13 +456,13 @@ def pool_all_cycle_results(ref_dict: dict, plddt_cutoff:float, catres_bb_rmsd_cu
         name="cycle_final_refinement_composite_score",
         scoreterms=final_scores,
         weights=comp_score_weights)
-    
+
     # sort
     backbones.df.sort_values("cycle_final_refinement_composite_score", ascending=True, inplace=True)
 
     # reindex to make sure no poses with identical names exist
     backbones.reindex_poses(prefix="pool_reindex", remove_layers=1, force_reindex=True)
-    
+
     return backbones
 
 def create_mutation_resfiles(omitted_aas:str, allowed_aas:str, name:str, dir:str):
@@ -531,7 +531,7 @@ def statsfiles_to_json(input_dir: str, description:str, filename):
         with open(filename) as json_file:
             structdict = json.load(json_file)
             return(structdict)
-        
+
     #gathers all coupled-moves statsfiles and converts to a single dictionary
     statsfiles = []
     resfiles = []
@@ -624,17 +624,17 @@ def create_coupled_moves_sequences(output_dir, cm_resultsdir, poses_df, occurenc
                     fasta.write(f">{var['poses_description']}\n{var['cm_sequences']}")
                 var['poses'] = pose_path
                 out_df.append(var)
-    
+
         out_df = pd.DataFrame(out_df).reset_index(drop=True)
         out_df.to_json(scorefile)
 
     else:
         out_df = pd.read_json(scorefile)
     return out_df
-    
+
 def weighted_average(df, group_col, score_col, weight_col, inverse: bool = False, weight_exponent: float = 1):
     """
-    Calculate the weighted average of a score column within groups, 
+    Calculate the weighted average of a score column within groups,
     using a specified column where the weight is determined based on its squared values.
 
     Parameters:
@@ -642,7 +642,7 @@ def weighted_average(df, group_col, score_col, weight_col, inverse: bool = False
     group_col (str): Column name to group by.
     score_col (str): Column to calculate the weighted average for.
     weight_col (str): Column used for weight calculation.
-    inverse (bool): If True, lower values in weight_col result in higher weights. 
+    inverse (bool): If True, lower values in weight_col result in higher weights.
                     If False, higher values in weight_col result in higher weights.
     weight_exponent (float): Exponent for weight calculation.
 
@@ -665,14 +665,14 @@ def top_fraction_avg(df: pd.DataFrame, group_col: str, value_col: str, fraction:
     """
     Groups a DataFrame by `group_col` and calculates the average of the top or
     bottom fraction of `value_col` within each group.
-    
+
     Parameters:
     df (pd.DataFrame): The input DataFrame.
     group_col (str): The column to group by.
     value_col (str): The column to calculate the fraction-based average from.
     fraction (float): The fraction of values to consider (default is 10%).
     mode (str): 'top' for highest values, 'bottom' for lowest values.
-    
+
     Returns:
     pd.DataFrame: A DataFrame with the group column and the calculated average.
     """
@@ -682,7 +682,7 @@ def top_fraction_avg(df: pd.DataFrame, group_col: str, value_col: str, fraction:
             return group.nsmallest(n, value_col)[value_col].mean()
         else:
             return group.nlargest(n, value_col)[value_col].mean()
-    
+
     return df.groupby(group_col).apply(fraction_avg).reset_index(name=f'{value_col}_top_{fraction}_avg')
 
 
@@ -698,7 +698,7 @@ def sort_and_combine_relaxed_df(df: pd.DataFrame, group_name, out_dir, path_col,
         out_structure.add(model)
 
     out_path = os.path.join(out_dir, f"{group_name}_combined.pdb")
-    save_structure_to_pdbfile(out_structure, out_path) 
+    save_structure_to_pdbfile(out_structure, out_path)
 
     return os.path.abspath(out_path)
 
@@ -761,7 +761,7 @@ def main(args):
         params = params[0].split(",")
     else:
         params = None
-    
+
     # check ligands
     if "ligand_path" in backbones.df.columns:
         ligand_paths = backbones.df["ligand_path"].unique()
@@ -771,7 +771,7 @@ def main(args):
         ligand_paths = ligand_paths[0].split(",")
     else:
         ligand_paths = None
-        
+
     # setup jobstarters
     cpu_jobstarter = SbatchArrayJobstarter(max_cores=args.max_cpus, batch_cmds=args.max_cpus)
     small_cpu_jobstarter = SbatchArrayJobstarter(max_cores=10, batch_cmds=10)
@@ -851,7 +851,7 @@ def main(args):
                 raise KeyError(f"<screen_input_selection> must be one of 'weighted', 'top' or 'random', not {args.screen_input_selection}!")
             backbones.save_poses(os.path.join(screening_dir, 'screening_input_poses'))
             backbones.save_scores(input_poses_path)
-        
+
         logging.info(f"Selected {len(backbones.df.index)} poses as input for screening.")
 
         # save input backbones for later
@@ -859,7 +859,7 @@ def main(args):
 
         # save run name in df, makes it easier to identify where poses come from when merging results with other runs
         backbones.df["run_name"] = os.path.basename(screening_dir)
-    
+
         # setup rfdiffusion options:
         backbones.df["rfdiffusion_contigs"] = backbones.df.apply(lambda row: write_rfdiffusion_contig(row['motif_contigs'], args.total_length, args.flanker_length, row["frag_length"], args.flanking, row["channel_contig"] if "channel_contig" in backbones.df.columns else None, sep=","), axis=1)
         backbones.df["rfdiffusion_inpaint_seq"] = backbones.df.apply(lambda row: write_rfdiffusion_inpaint_seq(row['motif_residues'], row['fixed_residues'], sep=","), axis=1)
@@ -1030,7 +1030,7 @@ def main(args):
                 # add covalent bonds info to poses pre-relax
                 backbones = add_covalent_bonds_info(poses=backbones, prefix="bbopt_cov_info", covalent_bonds_col="covalent_bonds")
 
-                # optimize backbones 
+                # optimize backbones
                 backbones.df[f'screen_bbopt_opts'] = [write_bbopt_opts(row=row, cycle=1, total_cycles=5, reference_location_col="updated_reference_frags_location", cat_res_col="fixed_residues", motif_res_col="motif_residues", ligand_chain="Z") for _, row in backbones.df.iterrows()]
                 rosetta.run(
                     poses = backbones,
@@ -1198,7 +1198,7 @@ def main(args):
             sys.exit(1)
         else:
             args.ref_input_json = backbones.scorefile
-    
+
     ############################################# REFINEMENT ########################################################
     if args.ref_input_json:
         if args.ref_prefix: ref_prefix = f"{args.ref_prefix}_"
@@ -1276,7 +1276,7 @@ def main(args):
                 return_seq_threaded_pdbs_as_pose=True
             )
 
-            # optimize backbones 
+            # optimize backbones
             logging.info("Optimizing backbones with Rosetta...")
             backbones.df[f'cycle_{cycle}_bbopt_opts'] = [write_bbopt_opts(row=row, cycle=cycle, total_cycles=args.ref_cycles, reference_location_col="updated_reference_frags_location", cat_res_col="fixed_residues", motif_res_col="motif_residues", ligand_chain="Z") for _, row in backbones.df.iterrows()]
 
@@ -1321,7 +1321,7 @@ def main(args):
             fragment_motif_bb_rmsd.run(poses = backbones, prefix = f"cycle_{cycle}_esm_motif")
             bb_rmsd.run(poses = backbones, ref_col=f"cycle_{cycle}_bbopt_location", prefix = f"cycle_{cycle}_esm_backbone")
             tm_score_calculator.run(poses = backbones, prefix = f"cycle_{cycle}_esm_tm", ref_col = f"cycle_{cycle}_bbopt_location")
-            
+
             # calculate cutoff & filter
             logging.info(f"Applying post-ESMFold backbone filters...")
             plddt_cutoff = ramp_cutoff(args.ref_plddt_cutoff_start, args.ref_plddt_cutoff_end, cycle, args.ref_cycles)
@@ -1414,7 +1414,7 @@ def main(args):
         else:
             cycle = "final"
             backbones = pool_all_cycle_results(ref_dict, plddt_cutoff, catres_bb_rmsd_cutoff, motif_bb_rmsd_cutoff, ref_comp_scoreterms, ref_comp_weights, refinement_dir)
-        
+
         ref_comp_scoreterms = [f"cycle_final_{'_'.join(score.split('_')[2:])}" for score in ref_comp_scoreterms]
 
         # sort output
@@ -1453,7 +1453,7 @@ def main(args):
         if args.eval_input_poses_per_bb:
             logging.info(f"Filtering evaluation input poses on per backbone level according to cycle_final_refinement_composite_score...")
             backbones.filter_poses_by_rank(n=args.eval_input_poses_per_bb, score_col=f"cycle_final_refinement_composite_score", remove_layers=1, prefix="evaluation_input_per_bb", plot=True, plot_cols=score_cols)
-        if args.eval_input_poses: 
+        if args.eval_input_poses:
             logging.info(f"Filtering evaluation input poses according to cycle_final_refinement_composite_score...")
             backbones.filter_poses_by_rank(n=args.eval_input_poses, score_col=f"cycle_final_refinement_composite_score", prefix="evaluation_input", plot=True, plot_cols=score_cols)
 
@@ -1484,7 +1484,7 @@ def main(args):
         except:
             trajectory_plots = instantiate_trajectory_plotting(backbones.plots_dir, scores = trajectory_scoreterms)
             trajectory_plots = update_trajectory_plotting(trajectory_plots=trajectory_plots, poses=backbones, prefix="cycle_final_esm")
-        
+
         backbones.convert_pdb_to_fasta(prefix="eval_fasta_conversion", update_poses=True)
 
         # set for easier merging later
@@ -1527,7 +1527,7 @@ def main(args):
         # calculate sc rmsd
         catres_motif_heavy_rmsd.run(poses=backbones, prefix=f"eval_af2_catres_heavy")
 
-        # add ligand chain 
+        # add ligand chain
         chain_adder.superimpose_add_chain(
             poses = backbones,
             prefix = f"eval_ligand",
@@ -1535,7 +1535,7 @@ def main(args):
             target_motif = "fixed_residues",
             copy_chain = "Z"
         )
-        
+
         # calculate ligand clashes and ligand contacts
         ligand_clash.run(poses=backbones, prefix="eval_af2_ligand")
         ligand_contacts.run(poses=backbones, prefix="eval_af2_lig")
@@ -1543,7 +1543,7 @@ def main(args):
 
         # filter for ligand contacts
         backbones.filter_poses_by_value(score_col="eval_af2_lig_contacts", value=args.min_contacts, operator=">=", prefix="eval_af2_lig_contacts", plot=True)
-        
+
         # add covalent bonds info
         backbones = add_covalent_bonds_info(poses=backbones, prefix="eval_af2_cov_info", covalent_bonds_col="covalent_bonds")
 
@@ -1570,7 +1570,7 @@ def main(args):
 
         # combine relaxed poses into a single multimodel pdb
         combined = combine_relax_output(rlx_poses.df, "poses", os.path.join(rlx_poses.work_dir, "relaxed_combined"), "eval_relaxed_combined_path", "eval_pre_relax_description", "eval_af2_fastrelax_total_score", 1)
-        rlx_poses.df = rlx_poses.df.merge(combined, on="eval_pre_relax_description", how="left") 
+        rlx_poses.df = rlx_poses.df.merge(combined, on="eval_pre_relax_description", how="left")
 
         # filter for top structure
         rlx_poses.filter_poses_by_rank(n=1, score_col="eval_af2_fastrelax_total_score", ascending=True, remove_layers=1)
@@ -1587,7 +1587,7 @@ def main(args):
             weights=eval_comp_weights,
             plot=True
         )
-        
+
         # update trajectory plots
         trajectory_plots = update_trajectory_plotting(trajectory_plots=trajectory_plots, poses=backbones, prefix=f"eval_af2")
 
@@ -1606,12 +1606,12 @@ def main(args):
 
         if args.variants_prefix: variants_prefix = f"{args.variants_prefix}_"
         else: variants_prefix = ""
-        
+
         backbones.set_work_dir(variants_work_dir := os.path.join(args.working_dir, f"{variants_prefix}variants"))
 
         eval_trajectory_plots = instantiate_trajectory_plotting(backbones.plots_dir, scores = ["postrelax_catres_heavy_rmsd_mean", "postrelax_ligand_rmsd_mean", "fastrelax_sap_score_mean"])
         eval_trajectory_plots = update_trajectory_plotting(trajectory_plots=eval_trajectory_plots, poses=backbones, prefix="eval_af2")
-        
+
         trajectory_plots = instantiate_trajectory_plotting(backbones.plots_dir, scores = trajectory_scoreterms)
         trajectory_plots = update_trajectory_plotting(trajectory_plots=trajectory_plots, poses=backbones, prefix="cycle_final_esm")
         trajectory_plots = update_trajectory_plotting(trajectory_plots=trajectory_plots, poses=backbones, prefix="eval_af2")
@@ -1682,11 +1682,11 @@ def main(args):
                     nstruct=50,
                     options=cm_options,
                     pose_options="cm_pose_opts")
-                
+
             os.chdir(original_dir)
             os.makedirs(cm_results_dir := os.path.join(backbones.work_dir, "cm_results"), exist_ok=True)
             backbones = pre_cm_poses
-        
+
             backbones.df = create_coupled_moves_sequences(cm_results_dir, cm_dir, backbones.df, args.variants_cm_occurence_cutoff)
 
         else:
@@ -1757,7 +1757,7 @@ def main(args):
 
         # copy description column for merging with data later
         backbones.df[f'variants_post_esm_description'] = backbones.df['poses_description']
-        
+
         # calculate multi-scoreterm score:
         logging.info("Calculating composite score for post-esm evaluation...")
         variants_esm_scoreterms = ["variants_esm_plddt", "variants_esm_catres_bb_rmsd", "variants_esm_catres_heavy_rmsd", "variants_esm_motif_rmsd", "variants_esm_contacts_score", "variants_esm_ligand_clashes"]
@@ -1768,7 +1768,7 @@ def main(args):
             weights=variants_esm_weights,
             plot=True
         )
-        
+
         # update trajectory plots
         trajectory_plots = update_trajectory_plotting(trajectory_plots=trajectory_plots, poses=backbones, prefix="variants_esm")
 
@@ -1837,7 +1837,7 @@ def main(args):
         # calculate sc rmsd
         catres_motif_heavy_rmsd.run(poses=backbones, prefix=f"variants_af2_catres_heavy")
 
-        # add ligand chain 
+        # add ligand chain
         chain_adder.superimpose_add_chain(
             poses = backbones,
             prefix = f"variants_af2_ligand",
@@ -1845,7 +1845,7 @@ def main(args):
             target_motif = "fixed_residues",
             copy_chain = "Z"
         )
-        
+
         # calculate ligand clashes and ligand contacts
         ligand_clash.run(poses=backbones, prefix="variants_af2_ligand")
         ligand_contacts.run(poses=backbones, prefix="variants_af2_lig")
@@ -1853,7 +1853,7 @@ def main(args):
 
         # filter for ligand contacts
         backbones.filter_poses_by_value(score_col="variants_af2_lig_contacts", value=args.min_contacts, operator=">=", prefix="variants_af2_lig_contacts", plot=True)
-        
+
         # add covalent bonds info
         backbones = add_covalent_bonds_info(poses=backbones, prefix="variants_af2_cov_info", covalent_bonds_col="covalent_bonds")
 
@@ -1877,10 +1877,10 @@ def main(args):
 
         # calculate average scores, filter
         rlx_poses = calculate_mean_scores(rlx_poses, scores=["variants_af2_postrelax_catres_heavy_rmsd", "variants_af2_postrelax_catres_bb_rmsd", "variants_af2_postrelax_ligand_rmsd", "variants_af2_fastrelax_total_score", "variants_af2_fastrelax_sap_score"], remove_layers=1)
-        
+
         # combine relaxed poses into a single multimodel pdb
         combined = combine_relax_output(rlx_poses.df, "poses", os.path.join(rlx_poses.work_dir, "relaxed_combined"), "variants_relaxed_combined_path", "variants_af2_pre_relax_description", "variants_af2_fastrelax_total_score", 1)
-        rlx_poses.df = rlx_poses.df.merge(combined, on="variants_af2_pre_relax_description", how="left") 
+        rlx_poses.df = rlx_poses.df.merge(combined, on="variants_af2_pre_relax_description", how="left")
 
         # filter for top structure
         rlx_poses.filter_poses_by_rank(n=1, score_col="variants_af2_fastrelax_total_score", ascending=True, remove_layers=1)
@@ -1937,7 +1937,7 @@ if __name__ == "__main__":
     argparser.add_argument("--screen_decentralize_weights", type=str, nargs="+", default=[30], help="Decentralize weights that should be tested during screening.")
     argparser.add_argument("--screen_decentralize_distances", type=str, nargs="+", default=[2], help="Decentralize distances that should be tested during screening.")
     argparser.add_argument("--screen_input_poses", type=int, default=200, help="Number of input poses for screening. Poses will be selected according to <screen_input_selection>.")
-    argparser.add_argument("--screen_input_selection", default="top", help="Can be either 'top' (default), 'random' or 'weighted'. Defines if motif library input poses are chosen based on score, at random or random weighted by score.")
+    argparser.add_argument("--screen_input_selection", default="weighted", help="Can be either 'top' (default), 'random' or 'weighted'. Defines if motif library input poses are chosen based on score, at random or random weighted by score.")
     argparser.add_argument("--screen_num_rfdiffusions", type=int, default=5, help="Number of backbones to generate per input path during screening.")
     argparser.add_argument("--screen_skip_mpnn_rlx_mpnn", action="store_true", help="Skip LigandMPNN-RELAX-LigandMPNN steps and just run LigandMPNN once before prediction with ESMFold. Faster, but lower success rates (only recommended for initial testing purposes).")
     argparser.add_argument("--screen_num_mpnn_sequences", type=int, default=30, help="Number of LigandMPNN sequences per backbone that should be generated and predicted with ESMFold post-RFdiffusion.")
@@ -2011,5 +2011,5 @@ if __name__ == "__main__":
 
     arguments = argparser.parse_args()
 
-    
+
     main(arguments)
