@@ -838,13 +838,14 @@ def main(args):
             backbones.df = previous_selection.df.loc[:, ["poses_description"]].merge(backbones.df, on="poses_description")
         else:
             if args.screen_input_selection == "weighted":
-                logging.info(f"Selecting screening input poses randomly weighted by path score.")
-                backbones.df = backbones.df.sample(n=min(args.screen_input_poses, len(backbones.df.index)), weights=backbones.df['path_score'])
+                logging.info("Selecting screening input poses randomly weighted by path score.")
+                backbones.df["selection_weights"] = backbones.df['path_score'] + 0.1 # to make sure each motif can be sampled, even if path score is 0
+                backbones.df = backbones.df.sample(n=min(args.screen_input_poses, len(backbones.df.index)), weights=backbones.df['selection_weights'])
             elif args.screen_input_selection == "top":
-                logging.info(f"Selecting screening input poses according to path score.")
+                logging.info("Selecting screening input poses according to path score.")
                 backbones.filter_poses_by_rank(n=min(args.screen_input_poses, len(backbones.df.index)), score_col='path_score', ascending=False, prefix='screening_input', plot=True)
             elif args.screen_input_selection == "random":
-                logging.info(f"Selecting screening input poses randomly.")
+                logging.info("Selecting screening input poses randomly.")
                 backbones.df = backbones.df.sample(n=min(args.screen_input_poses, len(backbones.df.index)))
             else:
                 logging.error(f"<screen_input_selection> must be one of 'weighted', 'top' or 'random', not {args.screen_input_selection}!")
