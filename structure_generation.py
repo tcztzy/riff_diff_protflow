@@ -1066,7 +1066,7 @@ def main(args):
                 backbones.calculate_composite_score(
                     name="pre_esm_comp_score",
                     scoreterms=["bbopt_total_score", "bbopt_contacts_score", "bbopt_ligand_clashes", "rfdiffusion_rog_data", "mpnn_overall_confidence"],
-                    weights=[1, 1, 1, -1, -1],
+                    weights=[1, 1, 1, 1, -1],
                     plot=True
                 )
 
