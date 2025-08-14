@@ -839,7 +839,7 @@ def main(args):
         else:
             if args.screen_input_selection == "weighted":
                 logging.info("Selecting screening input poses randomly weighted by path score.")
-                backbones.df["selection_weights"] = backbones.df['path_score'] + 2 * backbones.df['path_score'].min()
+                backbones.df["selection_weights"] = backbones.df['path_score'] + 0.1 # to make sure each motif can be sampled, even if path score is 0
                 backbones.df = backbones.df.sample(n=min(args.screen_input_poses, len(backbones.df.index)), weights=backbones.df['selection_weights'])
             elif args.screen_input_selection == "top":
                 logging.info("Selecting screening input poses according to path score.")
