@@ -146,7 +146,6 @@ def identify_backbone_angles_suitable_for_rotamer(residue_identity:str, rotlib:p
     '''
 
     filename = os.path.join(output_dir, output_prefix + f'{residue_identity}_rama_pre_filtering')
-    #utils.create_output_dir_change_filename(output_dir, output_prefix + f'{residue_identity}_rama_pre_filtering')
 
     rama_plot(rotlib, 'phi', 'psi', 'probability', 'phi_psi_occurrence', filename)
 
@@ -167,14 +166,15 @@ def identify_backbone_angles_suitable_for_rotamer(residue_identity:str, rotlib:p
 
     rotlib = rotlib.sort_values('rotamer_score', ascending=False)
 
-    if rotamer_chi_binsize and rotamer_phipsi_binsize:
-        rotlib = filter_rotlib_for_rotamer_diversity(rotlib, rotamer_chi_binsize, rotamer_phipsi_binsize)
-
-    if max_output:
-        rotlib = rotlib.head(max_output)
+    rotlib = filter_rotlib_for_rotamer_diversity(rotlib, rotamer_chi_binsize, rotamer_phipsi_binsize)
 
     if rotamer_diff_to_best:
         rotlib = rotlib[rotlib['probability'] >= rotlib['probability'].max() * (1 - rotamer_diff_to_best)]
+
+    rotlib = rotlib.sort_values('rotamer_score', ascending=False)
+
+    if max_output:
+        rotlib = rotlib.head(max_output)
 
     if rotlib.empty:
         raise RuntimeError('Could not find any rotamers that fit. Try setting different filter values!')
@@ -192,39 +192,42 @@ def angle_difference(angle1, angle2):
     '''
     return min([abs(angle1 - angle2), abs(angle1 - angle2 + 360), abs(angle1 - angle2 - 360)])
 
-def filter_rotlib_for_rotamer_diversity(rotlib:pd.DataFrame, rotamer_chi_binsize:float, rotamer_phipsi_binsize:float=None):
+def filter_rotlib_for_rotamer_diversity(rotlib:pd.DataFrame, rotamer_chi_binsize:float=None, rotamer_phipsi_binsize:float=None):
     '''
     filters rotamer library for more diversity in rotamers
     '''
     accepted_rotamers = []
-    if not rotamer_phipsi_binsize:
-        rotamer_phipsi_binsize = 361
     chi_columns = [column for column in rotlib.columns if column.startswith('chi') and not column.endswith('sig')]
 
     for _, row in rotlib.iterrows():
-        accept_list = []
+        rotamer_accept_list = []
         if len(accepted_rotamers) == 0:
             accepted_rotamers.append(row)
             continue
         for accepted_rot in accepted_rotamers:
-            column_accept_list = []
-            phipsi_difference = sum([angle_difference(row['phi'], accepted_rot['phi']), angle_difference(row['psi'], accepted_rot['psi'])])
-            for column in chi_columns:
-                #only accept rotamers that are different from already accepted ones
-                if angle_difference(row[column], accepted_rot[column]) >= rotamer_chi_binsize / 2:
-                    column_accept_list.append(True)
+            angle_accept_list = []
+            if rotamer_phipsi_binsize: # check for backbone angle difference
+                phi_difference = angle_difference(row['phi'], accepted_rot['phi'])
+                psi_difference = angle_difference(row['psi'], accepted_rot['psi'])
+                if sum([phi_difference, psi_difference]) >= rotamer_phipsi_binsize:
+                    angle_accept_list.append(True)
                 else:
-                    # if no rotamer_phipsi_binsize was defined or phi/psi angles are similar to accepted one, kick it out
-                    if not rotamer_phipsi_binsize or phipsi_difference < rotamer_phipsi_binsize:
-                        column_accept_list.append(False)
-                    #still accept rotamers that are similar if their backbone angles are different enough
+                    angle_accept_list.append(False)
+            if rotamer_chi_binsize:
+                for column in chi_columns:
+                    # only accept rotamers that are different from already accepted ones
+                    if angle_difference(row[column], accepted_rot[column]) >= rotamer_chi_binsize:
+                        angle_accept_list.append(True)
                     else:
-                        column_accept_list.append(True)
-            if True in column_accept_list:
-                accept_list.append(True)
+                        # if chi angles are similar to accepted one, set False
+                        angle_accept_list.append(False)
+            if not rotamer_chi_binsize and not rotamer_phipsi_binsize: # set true if no filter was set
+                angle_accept_list.append(True)
+            if True in angle_accept_list:
+                rotamer_accept_list.append(True) # if any angle was different enough, accept it
             else:
-                accept_list.append(False)
-        if set(accept_list) == {True}:
+                rotamer_accept_list.append(False) # if no angle was different enough, discard it
+        if set(rotamer_accept_list) == {True}: # check if difference to all accepted rotamers was ok
             accepted_rotamers.append(row)
     rotlib = pd.DataFrame(accepted_rotamers)
     return rotlib
@@ -1254,11 +1257,7 @@ def define_rotamer_positions(rotamer_positions, fragsize):
     parse rotamer positions
     '''
     if rotamer_positions == "auto":
-        rotamer_positions = int(fragsize / 2)
-        if rotamer_positions * 2 == fragsize:
-            rotamer_positions = [rotamer_positions, rotamer_positions + 1]
-        else:
-            rotamer_positions = [rotamer_positions + 1]
+        rotamer_positions = list(range(2, fragsize))
         return rotamer_positions
     elif isinstance(rotamer_positions, list):
         if any(int(pos) > fragsize for pos in rotamer_positions):
@@ -1877,7 +1876,7 @@ def main(args):
                 rotlib = normalize_col(rotlib, 'log_occurrence', scale=False)
                 rotlib = combine_normalized_scores(rotlib, 'rotamer_score', ['log_prob_normalized', 'log_occurrence_normalized'], [res_args.prob_weight, res_args.occurrence_weight], False, True)
                 log_and_print(f"Identifying most probable rotamers for residue {residue_identity}")
-                rotlib = identify_backbone_angles_suitable_for_rotamer(residue_identity, rotlib, rotinfo_dir, f'{resname}_', res_args.rot_sec_struct, res_args.phipsi_occurrence_cutoff, int(res_args.max_phi_psis / len(residue_identities)), res_args.rotamer_diff_to_best, res_args.rotamer_chi_binsize, res_args.rotamer_phipsi_binsize, res_args.prob_cutoff)
+                rotlib = identify_backbone_angles_suitable_for_rotamer(residue_identity, rotlib, rotinfo_dir, f'{resname}_', res_args.rot_sec_struct, res_args.phipsi_occurrence_cutoff, int(res_args.max_rotamers / len(residue_identities)), res_args.rotamer_diff_to_best, res_args.rotamer_chi_binsize, res_args.rotamer_phipsi_binsize, res_args.prob_cutoff)
                 log_and_print(f"Found {len(rotlib.index)} phi/psi/chi combinations.")
                 rotlibs.append(rotlib)
 
@@ -2323,7 +2322,7 @@ if __name__ == "__main__":
     argparser.add_argument("--theozyme_resnums", nargs="+", help="List of residue numbers with chain information (e.g. 'A25 A38 B188') in theozyme pdb to find fragments for.")
     argparser.add_argument("--working_dir", type=str, help="Output directory")
     argparser.add_argument("--output_prefix", type=str, default=None, help="Prefix for all output files")
-    argparser.add_argument("--ligands", nargs="+", type=str, help="List of ligands in the format 'X188 Z1'.")
+    argparser.add_argument("--ligands", nargs="+", type=str, help="List of ligands in theozyme pdb with chain information in the format 'X188 Z1'.")
 
     # important parameters
     argparser.add_argument("--fragment_pdb", type=str, default=None, help="Path to backbone fragment pdb. If not set, an idealized 7-residue helix fragment is used.")
@@ -2332,7 +2331,7 @@ if __name__ == "__main__":
     argparser.add_argument("--channel_chain", type=str, default=None, help="Chain of the custom channel placeholder (if using a custom channel specified with <custom_channel_path>)")
     argparser.add_argument("--preserve_channel_coordinates", action="store_true", help="Copies channel from channel reference pdb without superimposing on moitf-substrate centroid axis. Useful when channel is present in catalytic array.")
 
-    argparser.add_argument("--rotamer_positions", default="auto", nargs='+', help="Position in fragment the rotamer should be inserted, can either be int or a list containing first and last position (e.g. 2,6 if rotamer should be inserted at every position from 2 to 6). Recommended not to include N- and C-terminus! If auto, rotamer is inserted at every position when using backbone finder and in the central location when using fragment finder.")
+    argparser.add_argument("--rotamer_positions", default="auto", nargs='+', help="Position in fragment the rotamer should be inserted, can either be int or a list containing first and last position (e.g. 2,6 if rotamer should be inserted at every position from 2 to 6). Recommended not to include N- and C-terminus! If auto, rotamer is inserted at every position (except N- and C-terminus).")
     argparser.add_argument("--rmsd_cutoff", type=float, default=0.5, help="Set minimum RMSD of output fragments. Increase to get more diverse fragments, but high values might lead to very long runtime or few fragments!")
     argparser.add_argument("--prob_cutoff", type=float, default=0.05, help="Do not return any phi/psi combinations with chi angle probabilities below this value")
     argparser.add_argument("--add_equivalent_func_groups", action="store_true", help="use ASP/GLU, GLN/ASN and VAL/ILE interchangeably.")
@@ -2351,13 +2350,13 @@ if __name__ == "__main__":
     argparser.add_argument("--phipsi_occurrence_cutoff", type=float, default=0.5, help="Limit how common the phi/psi combination of a certain rotamer has to be. Value is in percent.")
     argparser.add_argument("--jobstarter", type=str, default="SbatchArray", help="Defines if jobs run locally or distributed on a cluster using a protflow jobstarter. Must be one of ['SbatchArray', 'Local'].")
     argparser.add_argument("--cpus", type=int, default=60, help="Defines how many cpus should be used for distributed computing.")
-    argparser.add_argument("--rotamer_chi_binsize", type=float, default=None, help="Filter for diversifying found rotamers. Lower numbers mean more similar rotamers will be found. Similar rotamers will still be accepted if their backbone angles are different. Recommended value: 15")
-    argparser.add_argument("--rotamer_phipsi_binsize", type=float, default=None, help="Filter for diversifying found rotamers. Lower numbers mean similar rotamers from more similar backbone angles will be accepted. Recommended value: 50")
+    argparser.add_argument("--rotamer_chi_binsize", type=float, default=None, help="Filter for diversifying found rotamers. Lower numbers mean more similar rotamers will be found. Similar rotamers will still be accepted if their backbone angles are different (if rotamer_phipsi_bin is set). Recommended value: 10")
+    argparser.add_argument("--rotamer_phipsi_binsize", type=float, default=None, help="Filter for diversifying found rotamers. Lower numbers mean similar rotamers from more similar backbone angles will be accepted. Recommended value: 20")
 
     # stuff you probably don't want to touch
     argparser.add_argument("--phi_psi_bin", type=float, default=9.9, help="Binsize used to identify if fragment fits to phi/psi combination. Should not be above 10!")
-    argparser.add_argument("--max_phi_psis", type=int, default=15, help="maximum number of phi/psi combination that should be returned. Can be increased if not enough fragments are found downstream (e.g. because secondary structure filter was used, and there are not enough phi/psi combinations in the output that fit to the specified secondary structure.")
-    argparser.add_argument("--rotamer_diff_to_best", type=float, default=0.8, help="Accept rotamers that have a probability not lower than this percentage of the most probable accepted rotamer. 1 means all rotamers will be accepted.")
+    argparser.add_argument("--max_rotamers", type=int, default=15, help="maximum number of phi/psi combination that should be returned. Can be increased if not enough fragments are found downstream (e.g. because secondary structure filter was used, and there are not enough phi/psi combinations in the output that fit to the specified secondary structure.")
+    argparser.add_argument("--rotamer_diff_to_best", type=float, default=1, help="Accept rotamers that have a probability not lower than this percentage of the most probable accepted rotamer. 1 means all rotamers will be accepted.")
     argparser.add_argument("--not_flip_symmetric", action="store_true", help="Do not flip tip symmetric residues (ARG, ASP, GLU, LEU, PHE, TYR, VAL).")
     argparser.add_argument("--prob_weight", type=float, default=2, help="Weight for rotamer probability importance when picking rotamers.")
     argparser.add_argument("--occurrence_weight", type=float, default=1, help="Weight for phi/psi-occurrence importance when picking rotamers.")
