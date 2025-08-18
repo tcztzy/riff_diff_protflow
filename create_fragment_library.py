@@ -1491,7 +1491,6 @@ def run_clash_detection(data, directory, bb_multiplier, sc_multiplier, script_pa
     # Combine all into final DataFrame (optimized for speed)
     ensemble_df = pd.concat(flattened_dfs, ignore_index=True)
     ensemble_df["ensemble_num"] = [i for i in range(len(valid_combos))] * n_sets
-    ensemble_df.sort_values("ensemble_num", inplace=True)
     ensemble_df.reset_index(drop=True, inplace=True)
 
     #log_and_print("Saving results...")
@@ -2152,15 +2151,14 @@ def main(args):
     log_and_print(f"Plotting data at {plotpath}.")
     score_df_size = len(score_df.index)
     if score_df_size > 1000000:
-        log_and_print(f"Downsampling dataframe for plotting because dataframe size is too big ({score_df_size}). Plotting only 1000000 rows.")
+        log_and_print(f"Downsampling dataframe for plotting because dataframe size is too big ({score_df_size} rows). Plotting only 1000000 random rows.")
         score_df_small = score_df.sample(n=1000000)
         violinplot_multiple_cols(score_df_small, cols=['ensemble_score', 'backbone_probability', 'rotamer_probability', 'phi_psi_occurrence'], titles=['ensemble_score', 'mean backbone\nprobability', 'mean rotamer\nprobability', 'mean phi psi\noccurrence'], y_labels=['score', 'probability', 'probability', 'probability'], out_path=plotpath, show_fig=False)
     else:
         violinplot_multiple_cols(score_df, cols=['ensemble_score', 'backbone_probability', 'rotamer_probability', 'phi_psi_occurrence'], titles=['ensemble_score', 'mean backbone\nprobability', 'mean rotamer\nprobability', 'mean phi psi\noccurrence'], y_labels=['score', 'probability', 'probability', 'probability'], out_path=plotpath, show_fig=False)
 
     # pre-filtering to reduce df size
-    score_df.sort_values('ensemble_score', ascending=False, inplace=True)
-    score_df_top = score_df.head(args.max_top_out)
+    score_df_top = score_df.nlargest(args.max_top_out, 'ensemble_score')
 
     if args.max_random_out > 0:
         # drop all previously picked paths
@@ -2335,12 +2333,12 @@ if __name__ == "__main__":
     argparser.add_argument("--preserve_channel_coordinates", action="store_true", help="Copies channel from channel reference pdb without superimposing on moitf-substrate centroid axis. Useful when channel is present in catalytic array.")
 
     argparser.add_argument("--rotamer_positions", default="auto", nargs='+', help="Position in fragment the rotamer should be inserted, can either be int or a list containing first and last position (e.g. 2,6 if rotamer should be inserted at every position from 2 to 6). Recommended not to include N- and C-terminus! If auto, rotamer is inserted at every position when using backbone finder and in the central location when using fragment finder.")
-    argparser.add_argument("--rmsd_cutoff", type=float, default=0.3, help="Set minimum RMSD of output fragments. Increase to get more diverse fragments, but high values might lead to very long runtime or few fragments!")
+    argparser.add_argument("--rmsd_cutoff", type=float, default=0.5, help="Set minimum RMSD of output fragments. Increase to get more diverse fragments, but high values might lead to very long runtime or few fragments!")
     argparser.add_argument("--prob_cutoff", type=float, default=0.05, help="Do not return any phi/psi combinations with chi angle probabilities below this value")
     argparser.add_argument("--add_equivalent_func_groups", action="store_true", help="use ASP/GLU, GLN/ASN and VAL/ILE interchangeably.")
 
     # stuff you might want to adjust
-    argparser.add_argument("--max_frags_per_residue", type=int, default=100, help="Maximum number of fragments that should be returned per active site residue.")
+    argparser.add_argument("--max_frags_per_residue", type=int, default=150, help="Maximum number of fragments that should be returned per active site residue.")
     #argparser.add_argument("--covalent_bonds", type=str, nargs="+", default=None, help="Add covalent bond(s) between residues and ligands in the form 'Res1-Res1Atom:Lig1-Lig1Atom,Res2-Res2Atom:Lig2-Lig2Atom'. Atom names should follow PDB numbering schemes. Example: 'A23-NE2:Z1-C1 A26-OE1:Z1-C11' for two covalent bonds between the NE2 atom of a Histidine at position A23 to C1 atom of ligand Z1 and the OE1 atom of a glutamic acid at A26 to C11 on the same ligand.")
     argparser.add_argument("--rot_lig_clash_vdw_multiplier", type=float, default=0.8, help="Multiplier for Van-der-Waals radii for clash detection between rotamer and ligand. Functional groups are not checked! Clash is detected if a distance between atoms < (VdW_radius_atom1 + VdW_radius_atom2)*multiplier.")
     argparser.add_argument("--bb_lig_clash_vdw_multiplier", type=float, default=1.0, help="Multiplier for Van-der-Waals radii for clash detection between fragment backbone and ligand. Clash is detected if a distance between atoms < (VdW_radius_atom1 + VdW_radius_atom2)*multiplier.")
@@ -2359,7 +2357,7 @@ if __name__ == "__main__":
     # stuff you probably don't want to touch
     argparser.add_argument("--phi_psi_bin", type=float, default=9.9, help="Binsize used to identify if fragment fits to phi/psi combination. Should not be above 10!")
     argparser.add_argument("--max_phi_psis", type=int, default=15, help="maximum number of phi/psi combination that should be returned. Can be increased if not enough fragments are found downstream (e.g. because secondary structure filter was used, and there are not enough phi/psi combinations in the output that fit to the specified secondary structure.")
-    argparser.add_argument("--rotamer_diff_to_best", type=float, default=0.7, help="Accept rotamers that have a probability not lower than this percentage of the most probable accepted rotamer. 1 means all rotamers will be accepted.")
+    argparser.add_argument("--rotamer_diff_to_best", type=float, default=0.8, help="Accept rotamers that have a probability not lower than this percentage of the most probable accepted rotamer. 1 means all rotamers will be accepted.")
     argparser.add_argument("--not_flip_symmetric", action="store_true", help="Do not flip tip symmetric residues (ARG, ASP, GLU, LEU, PHE, TYR, VAL).")
     argparser.add_argument("--prob_weight", type=float, default=2, help="Weight for rotamer probability importance when picking rotamers.")
     argparser.add_argument("--occurrence_weight", type=float, default=1, help="Weight for phi/psi-occurrence importance when picking rotamers.")
