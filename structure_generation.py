@@ -265,10 +265,12 @@ def combine_screening_results(dir: str, prefixes: list, scoreterms: list, weight
     counts = poses.df["input_poses"].value_counts()
     poses.df["successful_screening_results"] = poses.df["input_poses"].map(counts)
     unique = poses.df.drop_duplicates(subset=["input_poses"], keep="first")
-    successfull_motifs = input_motifs.df.merge(unique[['input_poses', 'successful_screening_results']], on="input_poses")
-    successfull_motifs.sort_values("successful_screening_results", ascending=False, inplace=True)
-    successfull_motifs.reset_index(drop=True, inplace=True)
-    successfull_motifs.to_json(os.path.join(out_dir, "successful_input_motifs.json"))
+    if "successful_screening_results" in input_motifs.df.columns:
+        input_motifs.df.drop("successful_screening_results", inplace=True, axis=1)
+    successful_motifs = input_motifs.df.merge(unique[['input_poses', 'successful_screening_results']], on="input_poses")
+    successful_motifs.sort_values("successful_screening_results", ascending=False, inplace=True)
+    successful_motifs.reset_index(drop=True, inplace=True)
+    successful_motifs.to_json(os.path.join(out_dir, "successful_input_motifs.json"))
 
     return poses
 
