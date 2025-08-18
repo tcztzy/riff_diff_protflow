@@ -823,7 +823,6 @@ def main(args):
         bb_opt_options = bb_opt_options + f" -extra_res_fa {' '.join(params)}"
 
     trajectory_scoreterms = ["plddt", "catres_bb_rmsd", "catres_heavy_rmsd", "motif_rmsd", "contacts_score", "ligand_clashes", "tm_TM_score_ref"]
-
     ############################################## SCREENING ######################################################
 
 
@@ -856,6 +855,9 @@ def main(args):
             backbones.save_scores(input_poses_path)
 
         logging.info(f"Selected {len(backbones.df.index)} poses as input for screening.")
+        if backbones.df.empty:
+            logging.error(f"Input dataframe is empty. Are you sure you set up a correct working directory that does not contain input poses from previous runs at {input_poses_path}?")
+            raise RuntimeError(f"Input dataframe is empty. Are you sure you set up a correct working directory that does not contain input poses from previous runs at {input_poses_path}?")
 
         # save input backbones for later
         starting_motifs = copy.deepcopy(backbones)
