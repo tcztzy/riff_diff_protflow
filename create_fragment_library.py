@@ -2150,11 +2150,18 @@ def main(args):
 
     plotpath = os.path.join(working_dir, "clash_filter.png")
     log_and_print(f"Plotting data at {plotpath}.")
-    violinplot_multiple_cols(score_df, cols=['backbone_probability', 'rotamer_probability', 'phi_psi_occurrence'], titles=['mean backbone\nprobability', 'mean rotamer\nprobability', 'mean phi psi\noccurrence'], y_labels=['probability', 'probability', 'probability'], out_path=plotpath, show_fig=False)
+    score_df_size = len(score_df.index)
+    if score_df_size > 1000000:
+        log_and_print(f"Downsampling dataframe for plotting because dataframe size is too big ({score_df_size}). Plotting only 1000000 rows.")
+        score_df_small = score_df.sample(n=1000000)
+        violinplot_multiple_cols(score_df_small, cols=['ensemble_score', 'backbone_probability', 'rotamer_probability', 'phi_psi_occurrence'], titles=['ensemble_score', 'mean backbone\nprobability', 'mean rotamer\nprobability', 'mean phi psi\noccurrence'], y_labels=['score', 'probability', 'probability', 'probability'], out_path=plotpath, show_fig=False)
+    else:
+        violinplot_multiple_cols(score_df, cols=['ensemble_score', 'backbone_probability', 'rotamer_probability', 'phi_psi_occurrence'], titles=['ensemble_score', 'mean backbone\nprobability', 'mean rotamer\nprobability', 'mean phi psi\noccurrence'], y_labels=['score', 'probability', 'probability', 'probability'], out_path=plotpath, show_fig=False)
 
     # pre-filtering to reduce df size
-    score_df.sort_values('ensemble_score', ascending=True, inplace=True)
+    score_df.sort_values('ensemble_score', ascending=False, inplace=True)
     score_df_top = score_df.head(args.max_top_out)
+
     if args.max_random_out > 0:
         # drop all previously picked paths
         remaining_index = score_df.index.difference(score_df_top.index)
@@ -2165,6 +2172,10 @@ def main(args):
         score_df = pd.concat([score_df, score_df_top]) # combine with top ensembles
     else:
         score_df = score_df_top
+
+    plotpath = os.path.join(working_dir, "pre_filter.png")
+    log_and_print(f"Plotting selected ensemble results at {plotpath}.")
+    violinplot_multiple_cols(score_df, cols=['ensemble_score', 'backbone_probability', 'rotamer_probability', 'phi_psi_occurrence'], titles=['ensemble_score', 'mean backbone\nprobability', 'mean rotamer\nprobability', 'mean phi psi\noccurrence'], y_labels=['score', 'probability', 'probability', 'probability'], out_path=plotpath, show_fig=False)
 
     post_clash = ensemble_dfs.merge(score_df['ensemble_score'], left_on='ensemble_num', right_index=True).sort_values('ensemble_num').reset_index(drop=True)
 
