@@ -995,7 +995,7 @@ def clean_input_backbone(entity: Structure):
     '''
     chains = [chain for chain in entity.get_chains()]
     models = [model for model in entity.get_models()]
-    if len(chains) > 1 or len(models):
+    if len(chains) > 1 or len(models) > 1:
         logging.error("Input backbone fragment pdb must only contain a single chain and a single model!")
     for model in models:
         model.id = 0
