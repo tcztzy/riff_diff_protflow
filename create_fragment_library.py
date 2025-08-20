@@ -146,7 +146,6 @@ def identify_backbone_angles_suitable_for_rotamer(residue_identity:str, rotlib:p
     '''
 
     filename = os.path.join(output_dir, output_prefix + f'{residue_identity}_rama_pre_filtering')
-    #utils.create_output_dir_change_filename(output_dir, output_prefix + f'{residue_identity}_rama_pre_filtering')
 
     rama_plot(rotlib, 'phi', 'psi', 'probability', 'phi_psi_occurrence', filename)
 
@@ -167,14 +166,15 @@ def identify_backbone_angles_suitable_for_rotamer(residue_identity:str, rotlib:p
 
     rotlib = rotlib.sort_values('rotamer_score', ascending=False)
 
-    if rotamer_chi_binsize and rotamer_phipsi_binsize:
-        rotlib = filter_rotlib_for_rotamer_diversity(rotlib, rotamer_chi_binsize, rotamer_phipsi_binsize)
-
-    if max_output:
-        rotlib = rotlib.head(max_output)
+    rotlib = filter_rotlib_for_rotamer_diversity(rotlib, rotamer_chi_binsize, rotamer_phipsi_binsize)
 
     if rotamer_diff_to_best:
         rotlib = rotlib[rotlib['probability'] >= rotlib['probability'].max() * (1 - rotamer_diff_to_best)]
+
+    rotlib = rotlib.sort_values('rotamer_score', ascending=False)
+
+    if max_output:
+        rotlib = rotlib.head(max_output)
 
     if rotlib.empty:
         raise RuntimeError('Could not find any rotamers that fit. Try setting different filter values!')
@@ -192,39 +192,42 @@ def angle_difference(angle1, angle2):
     '''
     return min([abs(angle1 - angle2), abs(angle1 - angle2 + 360), abs(angle1 - angle2 - 360)])
 
-def filter_rotlib_for_rotamer_diversity(rotlib:pd.DataFrame, rotamer_chi_binsize:float, rotamer_phipsi_binsize:float=None):
+def filter_rotlib_for_rotamer_diversity(rotlib:pd.DataFrame, rotamer_chi_binsize:float=None, rotamer_phipsi_binsize:float=None):
     '''
     filters rotamer library for more diversity in rotamers
     '''
     accepted_rotamers = []
-    if not rotamer_phipsi_binsize:
-        rotamer_phipsi_binsize = 361
     chi_columns = [column for column in rotlib.columns if column.startswith('chi') and not column.endswith('sig')]
 
     for _, row in rotlib.iterrows():
-        accept_list = []
+        rotamer_accept_list = []
         if len(accepted_rotamers) == 0:
             accepted_rotamers.append(row)
             continue
         for accepted_rot in accepted_rotamers:
-            column_accept_list = []
-            phipsi_difference = sum([angle_difference(row['phi'], accepted_rot['phi']), angle_difference(row['psi'], accepted_rot['psi'])])
-            for column in chi_columns:
-                #only accept rotamers that are different from already accepted ones
-                if angle_difference(row[column], accepted_rot[column]) >= rotamer_chi_binsize / 2:
-                    column_accept_list.append(True)
+            angle_accept_list = []
+            if rotamer_phipsi_binsize: # check for backbone angle difference
+                phi_difference = angle_difference(row['phi'], accepted_rot['phi'])
+                psi_difference = angle_difference(row['psi'], accepted_rot['psi'])
+                if sum([phi_difference, psi_difference]) >= rotamer_phipsi_binsize:
+                    angle_accept_list.append(True)
                 else:
-                    # if no rotamer_phipsi_binsize was defined or phi/psi angles are similar to accepted one, kick it out
-                    if not rotamer_phipsi_binsize or phipsi_difference < rotamer_phipsi_binsize:
-                        column_accept_list.append(False)
-                    #still accept rotamers that are similar if their backbone angles are different enough
+                    angle_accept_list.append(False)
+            if rotamer_chi_binsize:
+                for column in chi_columns:
+                    # only accept rotamers that are different from already accepted ones
+                    if angle_difference(row[column], accepted_rot[column]) >= rotamer_chi_binsize:
+                        angle_accept_list.append(True)
                     else:
-                        column_accept_list.append(True)
-            if True in column_accept_list:
-                accept_list.append(True)
+                        # if chi angles are similar to accepted one, set False
+                        angle_accept_list.append(False)
+            if not rotamer_chi_binsize and not rotamer_phipsi_binsize: # set true if no filter was set
+                angle_accept_list.append(True)
+            if True in angle_accept_list:
+                rotamer_accept_list.append(True) # if any angle was different enough, accept it
             else:
-                accept_list.append(False)
-        if set(accept_list) == {True}:
+                rotamer_accept_list.append(False) # if no angle was different enough, discard it
+        if set(rotamer_accept_list) == {True}: # check if difference to all accepted rotamers was ok
             accepted_rotamers.append(row)
     rotlib = pd.DataFrame(accepted_rotamers)
     return rotlib
@@ -306,8 +309,8 @@ def filter_frags_df_by_secondary_structure_content(frags_df, frag_sec_struct_fra
     '''
     frags_df_list = []
     for _, df in frags_df.groupby('frag_num', sort=False):
-        for sec_struct in frag_sec_struct_fraction:
-            if df['ss'].str.contains(sec_struct).sum() / len(df.index) >= frag_sec_struct_fraction[sec_struct]:
+        for sec_struct, fraction in frag_sec_struct_fraction.items():
+            if df['ss'].str.contains(sec_struct, regex=False).sum() / len(df.index) >= fraction:
                 frags_df_list.append(df)
                 break
     if len(frags_df_list) > 0:
@@ -446,40 +449,57 @@ def sort_frags_df_by_score(frags_df, backbone_score_weight, rotamer_score_weight
     for col in ['phi', 'psi', 'omega']:
         frags_df.loc[frags_df[col] <= -175, col] += 360
 
+    cols = frags_df.columns
+    AA_i     = cols.get_loc('AA')
+    phi_i    = cols.get_loc('phi')
+    psi_i    = cols.get_loc('psi')
+    omega_i  = cols.get_loc('omega')
+    frag_i   = cols.get_loc('frag_num')
+    rotpos_i = cols.get_loc('rotamer_pos')
+    rotid_i  = cols.get_loc('rotamer_id')
+
     df_list = []
     frag_num = 0
+    # assume frag_num is defined before the loop
     for _, unique_df in frags_df.groupby('frag_identifier', sort=False):
-        # access rotamer positions and ids
-        rotamer_pos = unique_df.iat[0, unique_df.columns.get_loc('rotamer_pos')]
-        rotamer_id = unique_df.iat[0, unique_df.columns.get_loc('rotamer_id')]
+        # read rotamer info
+        rotamer_pos = int(unique_df.iat[0, rotpos_i])
+        rotamer_id  = unique_df.iat[0, rotid_i]
 
-        # calculate number of similar fragments
-        backbone_count = unique_df['frag_num'].nunique()
-        unique_df["backbone_count"] = backbone_count
+        # backbone count (fast path if guaranteed layout: len(unique_df)//frag_length)
+        backbone_count = len(unique_df)//frag_length
 
-        # access indices of each residue
-        indices = [[index + pos for index in range(0, len(unique_df.index), frag_length)] for pos in range(0, frag_length)]
+        # compute medians for each residue position
+        # (your existing lists phis/psis/omegas work; vectorized shown here)
+        n = len(unique_df)
+        bc = n // frag_length
 
-        # calculate medians for each residue
-        phis, psis, omegas = [], [], []
-        for index_list in indices:
-            df = unique_df.iloc[index_list]
-            phis.append(df['phi'].median())
-            psis.append(df['psi'].median())
-            omegas.append(df['omega'].median())
+        phi_v   = unique_df.iloc[:, phi_i].to_numpy()
+        psi_v   = unique_df.iloc[:, psi_i].to_numpy()
+        omega_v = unique_df.iloc[:, omega_i].to_numpy()
 
-        # avoid creating a new df, ugly but faster (iloc is also faster than loc)
-        unique_df.iloc[0:frag_length, unique_df.columns.get_loc('AA')] = 'GLY'
-        unique_df.iat[rotamer_pos - 1, unique_df.columns.get_loc('AA')] = rotamer_id
-        unique_df.iloc[0:frag_length, unique_df.columns.get_loc('phi')] = phis
-        unique_df.iloc[0:frag_length, unique_df.columns.get_loc('psi')] = psis
-        unique_df.iloc[0:frag_length, unique_df.columns.get_loc('omega')] = omegas
-        unique_df.iloc[0:frag_length, unique_df.columns.get_loc('frag_num')] = frag_num
+        phis   = np.nanmedian(phi_v.reshape(frag_length, bc),   axis=1)
+        psis   = np.nanmedian(psi_v.reshape(frag_length, bc),   axis=1)
+        omegas = np.nanmedian(omega_v.reshape(frag_length, bc), axis=1)
 
+        head = slice(0, frag_length)
+
+        # set AA for the first fragment
+        unique_df.iloc[head, AA_i] = 'GLY'
+        unique_df.iat[rotamer_pos - 1, AA_i] = rotamer_id  # still OK (scalar)
+
+        # write medians only into the first fragment rows
+        unique_df.iloc[head, [phi_i, psi_i, omega_i]] = np.column_stack((phis, psis, omegas))
+
+        # and only tag those rows
+        unique_df.iloc[head, frag_i] = frag_num
+        unique_df.loc[unique_df.index[head], 'backbone_count'] = backbone_count
+
+        df_list.append(unique_df.iloc[head])
         frag_num += 1
-        df_list.append(unique_df.iloc[0:frag_length])
 
-    frags_df = pd.concat(df_list)
+    frags_df = pd.concat(df_list, ignore_index=True)
+
     frags_df.drop(['pdb', 'ss', 'frag_identifier'], axis=1, inplace=True)
     frags_df['backbone_probability'] = frags_df['backbone_count'] / total_fragments
 
@@ -692,100 +712,46 @@ def assign_frag_identifier(df, pos):
 
     return df
 
-def extract_fragments(rotamer_positions_df: pd.DataFrame, fraglib: pd.DataFrame, frag_pos_to_replace: list, fragsize: int, working_dir: str):
+def extract_fragments(rotamer_positions_df: pd.DataFrame, fraglib_path: str, frag_pos_to_replace: list, fragsize: int, working_dir: str, script_path:str, jobstarter):
     '''
     frag_pos_to_replace: the position in the fragment the future rotamer should be inserted. central position recommended.
     residue_identity: only accept fragments with the correct residue identity at that position (recommended)
     rotamer_secondary_structure: accepts a string describing secondary structure (B: isolated beta bridge residue, E: strand, G: 3-10 helix, H: alpha helix, I: pi helix, T: turn, S: bend, -: none (not in the sense of no filter --> use None instead!)). e.g. provide EH if central atom in fragment should be a helix or strand.
     '''
+    def write_rotamer_extraction_cmd(script_path, rotamer_positions_path, fraglib_path, rotamer_positions, fragsize, out_path):
+        cmd = f"{os.path.join(PROTFLOW_ENV, 'python')} {script_path} --rotpos_path {rotamer_positions_path} --fraglib_path {fraglib_path} --rotamer_positions {','.join([str(pos) for pos in rotamer_positions])} --fragsize {fragsize} --outfile {out_path}"
+        return cmd
 
     #choose fragments from fragment library that contain the positions selected above
-    fragnum = 0
     frag_dict = {}
     rotamer_positions_df["temp_index_for_merge"] = rotamer_positions_df.index
+
     os.makedirs(working_dir, exist_ok=True)
-    for pos in frag_pos_to_replace:
-        # read in previous results if they exist
-        if os.path.isfile(outfile := os.path.join(working_dir, f"fragments_{pos}.pkl")):
-            log_and_print(f"Found previous results at {outfile}.")
-            frags_df = pd.read_pickle(outfile)
-            frag_dict[pos] = frags_df
-            continue
 
-        rotamer_positions_df["temp_pos_for_merge"] = pos
+    cmds = []
+    out_paths = []
+    # split rotamer positions df into several parts, create fragments for each part
+    for i, split_df in enumerate(np.array_split(rotamer_positions_df, min(jobstarter.max_cores, len(rotamer_positions_df.index)))):
+        split_df.to_pickle(positions_path := os.path.join(working_dir, f"rotamer_positions_{i}.pkl"))
+        out_paths.append(out_path := os.path.join(working_dir, f"fragments_{i}.pkl"))
+        cmds.append(write_rotamer_extraction_cmd(script_path, positions_path, fraglib_path, frag_pos_to_replace, fragsize, out_path))
 
-        # define start and end index for each position
-        index_starts = rotamer_positions_df.index - pos + 1
-        index_ends = index_starts + fragsize
+    jobstarter.start(cmds=cmds, jobname="fragment_extraction", wait=True, output_path=working_dir) # distribute fragment extraction to cluster
 
-        # create range between start and end
-        all_values = []
-        for start, end in zip(index_starts, index_ends):
-            if start >= 0 and end <= fraglib.index.max():
-                all_values.extend(range(start, end))  # Append the range to the list
-        indices = np.array(all_values)
+    # combine all fragments
+    num_frags = 0
+    frags_dfs = []
+    for out_path in out_paths:
+        # read in results
+        frags_df = pd.read_pickle(out_path)
+        max_frags = frags_df["frag_num"].max()
+        frags_df['frag_num'] = frags_df['frag_num'] + num_frags # update frag_num to have continuous fragnums over all positions
+        num_frags = num_frags + max_frags + 1
+        frags_dfs.append(frags_df)
 
-        # extract all indices
-        df = fraglib.loc[indices]
-        df['temp_index_for_merge'] = df.index
-        df.reset_index(drop=True, inplace=True)
+    frags_dfs = pd.concat(frags_dfs)
 
-        # group by fragsize
-        group_key = df.index // fragsize
-        # check if each group has a unique pdb (to prevent taking frags with res from different pdbs) and consecutive numbers (to prevent using frags with chainbreaks)
-        valid_groups = df.groupby(group_key).filter(lambda x: x['pdb'].nunique() == 1 and has_consecutive_numbers(x, "position", fragsize))
-        if valid_groups.empty:
-            log_and_print(f"No fragments passed for position {pos}!")
-            frag_dict[pos] = pd.DataFrame()
-            continue
-
-        valid_groups.reset_index(drop=True, inplace=True)
-
-        # Create a new identifier column based on the valid groups
-        group_key = valid_groups.index // fragsize
-        valid_group_ids = valid_groups.groupby(group_key).ngroup() + 1  # Create unique group identifiers
-
-        # Assign the identifier to the filtered DataFrame
-        valid_groups['frag_num'] = valid_group_ids + fragnum
-
-        # number residues within fragments from 1 to fragsize
-        valid_groups['residue_numbers'] = valid_groups.groupby(group_key).cumcount() + 1
-
-        # merge with rotamer_positions df on index column and correct position (to make sure not merging with rotamer at another position!)
-        valid_groups_merge = valid_groups.copy()
-        preserve_cols = ['temp_index_for_merge', 'temp_pos_for_merge', 'AA', 'probability', 'phi_psi_occurrence', 'rotamer_score', 'rotamer_index']
-        valid_groups_merge = valid_groups_merge[['temp_index_for_merge', 'residue_numbers', 'frag_num']].merge(rotamer_positions_df[preserve_cols], left_on=['temp_index_for_merge', 'residue_numbers'], right_on=['temp_index_for_merge', 'temp_pos_for_merge'])
-
-        # modify df for downstream processing
-        valid_groups_merge.rename({'AA': 'rotamer_id'}, inplace=True, axis=1)
-        valid_groups_merge.drop(['temp_index_for_merge', 'residue_numbers'], axis=1, inplace=True)
-        valid_groups_merge['phi_psi_occurrence'] = valid_groups_merge['phi_psi_occurrence'] * 100
-
-        # merge back with all residues from fragments
-        frags_df = valid_groups.merge(valid_groups_merge, on="frag_num")
-
-        # set non-rotamer positions to 0
-        frags_df.loc[frags_df['residue_numbers'] != pos, 'probability'] = None
-        frags_df.loc[frags_df['residue_numbers'] != pos, 'phi_psi_occurrence'] = None
-
-        # define rotamer position
-        frags_df['rotamer_pos'] = pos
-
-        # assign identifier based on phi/psi/omega angles, rotamer id and rotamer position
-        frags_df = assign_frag_identifier(frags_df, pos)
-
-        # add fragnum so that fragment numbering is continous for next position
-        fragnum = fragnum + frags_df['frag_num'].max()
-
-        # drop identifier column
-        frags_df.drop(['temp_index_for_merge', 'temp_pos_for_merge'], axis=1, inplace=True)
-
-        # write frags_df to json
-        frags_df.to_pickle(outfile)
-
-        frag_dict[pos] = frags_df
-
-    return frag_dict
+    return frags_dfs
 
 
 def extract_backbone_angles(chain, resnum:int):
@@ -1029,7 +995,7 @@ def clean_input_backbone(entity: Structure):
     '''
     chains = [chain for chain in entity.get_chains()]
     models = [model for model in entity.get_models()]
-    if len(chains) > 1 or len(models):
+    if len(chains) > 1 or len(models) > 1:
         logging.error("Input backbone fragment pdb must only contain a single chain and a single model!")
     for model in models:
         model.id = 0
@@ -1254,11 +1220,7 @@ def define_rotamer_positions(rotamer_positions, fragsize):
     parse rotamer positions
     '''
     if rotamer_positions == "auto":
-        rotamer_positions = int(fragsize / 2)
-        if rotamer_positions * 2 == fragsize:
-            rotamer_positions = [rotamer_positions, rotamer_positions + 1]
-        else:
-            rotamer_positions = [rotamer_positions + 1]
+        rotamer_positions = list(range(2, fragsize))
         return rotamer_positions
     elif isinstance(rotamer_positions, list):
         if any(int(pos) > fragsize for pos in rotamer_positions):
@@ -1865,8 +1827,6 @@ def main(args):
             fraglib_path = os.path.join(database_dir, 'fraglib_noscore.pkl')
             log_and_print(f"Importing fragment library from {fraglib_path}")
 
-            fraglib = import_fragment_library(fraglib_path)
-
             rotlibs = []
 
             for residue_identity in residue_identities:
@@ -1877,7 +1837,7 @@ def main(args):
                 rotlib = normalize_col(rotlib, 'log_occurrence', scale=False)
                 rotlib = combine_normalized_scores(rotlib, 'rotamer_score', ['log_prob_normalized', 'log_occurrence_normalized'], [res_args.prob_weight, res_args.occurrence_weight], False, True)
                 log_and_print(f"Identifying most probable rotamers for residue {residue_identity}")
-                rotlib = identify_backbone_angles_suitable_for_rotamer(residue_identity, rotlib, rotinfo_dir, f'{resname}_', res_args.rot_sec_struct, res_args.phipsi_occurrence_cutoff, int(res_args.max_phi_psis / len(residue_identities)), res_args.rotamer_diff_to_best, res_args.rotamer_chi_binsize, res_args.rotamer_phipsi_binsize, res_args.prob_cutoff)
+                rotlib = identify_backbone_angles_suitable_for_rotamer(residue_identity, rotlib, rotinfo_dir, f'{resname}_', res_args.rot_sec_struct, res_args.phipsi_occurrence_cutoff, int(res_args.max_rotamers / len(residue_identities)), res_args.rotamer_diff_to_best, res_args.rotamer_chi_binsize, res_args.rotamer_phipsi_binsize, res_args.prob_cutoff)
                 log_and_print(f"Found {len(rotlib.index)} phi/psi/chi combinations.")
                 rotlibs.append(rotlib)
 
@@ -1901,43 +1861,25 @@ def main(args):
             rotamer_positions = identify_positions_for_rotamer_insertion(fraglib_path, rotlib, res_args.rot_sec_struct, res_args.phi_psi_bin, os.path.join(fragment_dir, "rotamer_positions"), os.path.join(utils_dir, "identify_positions_for_rotamer_insertion.py"), resname, res_args.chi_std_multiplier, jobstarter=jobstarter)
             log_and_print(f"Found {len(rotamer_positions.index)} fitting positions.")
             log_and_print("Extracting fragments from rotamer positions...")
-            frag_dict = extract_fragments(rotamer_positions, fraglib, frag_pos_to_replace, res_args.fragsize, os.path.join(fragment_dir, f"{resname}_database_fragments"))
-            frag_num = int(sum([len(pos_df.index) for _, pos_df in frag_dict.items()]) / res_args.fragsize)
+            combined = extract_fragments(rotamer_positions, fraglib_path, frag_pos_to_replace, res_args.fragsize, os.path.join(fragment_dir, f"{resname}_database_fragments"), os.path.join(utils_dir, "fragment_extraction.py"), jobstarter)
+            frag_num = int(len(combined.index) / res_args.fragsize)
             log_and_print(f'Found {frag_num} fragments.')
 
             #filter fragments
-            for pos, pos_df in frag_dict.items():
-                frag_nums = int(len(pos_df.index) / res_args.fragsize)
-                log_and_print(f'Found {frag_nums} fragments for position {pos}.')
-                if frag_nums == 0:
-                    frag_dict.pop(pos)
-                    log_and_print(f"Could not find fragments for position {pos}.")
-                    continue
-                if sec_dict:
-                    if os.path.isfile(filtered_frags := os.path.join(fragment_dir, f"{resname}_database_fragments", f"{pos}_sec_struct_filtered_frags.pkl")):
-                        log_and_print(f"Found previous filter results at {filtered_frags}.")
-                        pos_df = pd.read_pickle(filtered_frags)
-                    else:
-                        pos_df = filter_frags_df_by_secondary_structure_content(pos_df, sec_dict)
-                        pos_df.to_pickle(filtered_frags)
-                    log_and_print(f"{int(len(pos_df) / res_args.fragsize)} fragments passed secondary structure filtering with filter {res_args.frag_sec_struct_fraction} for position {pos}.")
-                if pos_df.empty:
-                    frag_dict.pop(pos)
-                    log_and_print(f"Could not find fragments for position {pos}.")
-
-            if len(frag_dict) == 0:
+            if frag_num == 0:
+                log_and_print("Could not find fragments.")
+                raise RuntimeError("Could not find fragments.")
+            if sec_dict:
+                combined = filter_frags_df_by_secondary_structure_content(combined, sec_dict)
+                log_and_print(f"{int(len(combined) / res_args.fragsize)} fragments passed secondary structure filtering with filter {res_args.frag_sec_struct_fraction}.")
+            if combined.empty:
+                log_and_print('Could not find any fragments that fit criteria! Try adjusting filter values!')
                 raise RuntimeError('Could not find any fragments that fit criteria! Try adjusting filter values!')
 
-
-            combined = pd.concat([pos_df for _, pos_df in frag_dict.items()])
             log_and_print(f"Averaging and sorting fragments by fragment score with weights (backbone: {res_args.backbone_score_weight}, rotamer: {res_args.rotamer_score_weight}).")
-            if os.path.isfile(averaged_frags := os.path.join(fragment_dir, f"{resname}_database_fragments", "averaged_sorted_frags.json")):
-                log_and_print(f"Found previous averaging results at {averaged_frags}.")
-                combined = pd.read_json(averaged_frags)
-            else:
-                combined = sort_frags_df_by_score(combined, res_args.backbone_score_weight, res_args.rotamer_score_weight, res_args.fragsize)
-                combined.to_json(averaged_frags)
+            combined = sort_frags_df_by_score(combined, res_args.backbone_score_weight, res_args.rotamer_score_weight, res_args.fragsize)
 
+            frag_dict = {}
             for pos, df in combined.groupby('rotamer_pos', sort=True):
                 frag_dict[pos] = df
                 log_and_print(f"Created {int(len(frag_dict[pos].index) / res_args.fragsize)} unique fragments for position {pos}.")
@@ -2323,7 +2265,7 @@ if __name__ == "__main__":
     argparser.add_argument("--theozyme_resnums", nargs="+", help="List of residue numbers with chain information (e.g. 'A25 A38 B188') in theozyme pdb to find fragments for.")
     argparser.add_argument("--working_dir", type=str, help="Output directory")
     argparser.add_argument("--output_prefix", type=str, default=None, help="Prefix for all output files")
-    argparser.add_argument("--ligands", nargs="+", type=str, help="List of ligands in the format 'X188 Z1'.")
+    argparser.add_argument("--ligands", nargs="+", type=str, help="List of ligands in theozyme pdb with chain information in the format 'X188 Z1'.")
 
     # important parameters
     argparser.add_argument("--fragment_pdb", type=str, default=None, help="Path to backbone fragment pdb. If not set, an idealized 7-residue helix fragment is used.")
@@ -2332,7 +2274,7 @@ if __name__ == "__main__":
     argparser.add_argument("--channel_chain", type=str, default=None, help="Chain of the custom channel placeholder (if using a custom channel specified with <custom_channel_path>)")
     argparser.add_argument("--preserve_channel_coordinates", action="store_true", help="Copies channel from channel reference pdb without superimposing on moitf-substrate centroid axis. Useful when channel is present in catalytic array.")
 
-    argparser.add_argument("--rotamer_positions", default="auto", nargs='+', help="Position in fragment the rotamer should be inserted, can either be int or a list containing first and last position (e.g. 2,6 if rotamer should be inserted at every position from 2 to 6). Recommended not to include N- and C-terminus! If auto, rotamer is inserted at every position when using backbone finder and in the central location when using fragment finder.")
+    argparser.add_argument("--rotamer_positions", default="auto", nargs='+', help="Position in fragment the rotamer should be inserted, can either be int or a list containing first and last position (e.g. 2,6 if rotamer should be inserted at every position from 2 to 6). Recommended not to include N- and C-terminus! If auto, rotamer is inserted at every position (except N- and C-terminus).")
     argparser.add_argument("--rmsd_cutoff", type=float, default=0.5, help="Set minimum RMSD of output fragments. Increase to get more diverse fragments, but high values might lead to very long runtime or few fragments!")
     argparser.add_argument("--prob_cutoff", type=float, default=0.05, help="Do not return any phi/psi combinations with chi angle probabilities below this value")
     argparser.add_argument("--add_equivalent_func_groups", action="store_true", help="use ASP/GLU, GLN/ASN and VAL/ILE interchangeably.")
@@ -2351,13 +2293,13 @@ if __name__ == "__main__":
     argparser.add_argument("--phipsi_occurrence_cutoff", type=float, default=0.5, help="Limit how common the phi/psi combination of a certain rotamer has to be. Value is in percent.")
     argparser.add_argument("--jobstarter", type=str, default="SbatchArray", help="Defines if jobs run locally or distributed on a cluster using a protflow jobstarter. Must be one of ['SbatchArray', 'Local'].")
     argparser.add_argument("--cpus", type=int, default=60, help="Defines how many cpus should be used for distributed computing.")
-    argparser.add_argument("--rotamer_chi_binsize", type=float, default=None, help="Filter for diversifying found rotamers. Lower numbers mean more similar rotamers will be found. Similar rotamers will still be accepted if their backbone angles are different. Recommended value: 15")
-    argparser.add_argument("--rotamer_phipsi_binsize", type=float, default=None, help="Filter for diversifying found rotamers. Lower numbers mean similar rotamers from more similar backbone angles will be accepted. Recommended value: 50")
+    argparser.add_argument("--rotamer_chi_binsize", type=float, default=10, help="Filter for diversifying found rotamers. Lower numbers mean more similar rotamers will be found. Similar rotamers will still be accepted if their backbone angles are different (if rotamer_phipsi_bin is set).")
+    argparser.add_argument("--rotamer_phipsi_binsize", type=float, default=20, help="Filter for diversifying found rotamers. Lower numbers mean similar rotamers from more similar backbone angles will be accepted.")
 
     # stuff you probably don't want to touch
     argparser.add_argument("--phi_psi_bin", type=float, default=9.9, help="Binsize used to identify if fragment fits to phi/psi combination. Should not be above 10!")
-    argparser.add_argument("--max_phi_psis", type=int, default=15, help="maximum number of phi/psi combination that should be returned. Can be increased if not enough fragments are found downstream (e.g. because secondary structure filter was used, and there are not enough phi/psi combinations in the output that fit to the specified secondary structure.")
-    argparser.add_argument("--rotamer_diff_to_best", type=float, default=0.8, help="Accept rotamers that have a probability not lower than this percentage of the most probable accepted rotamer. 1 means all rotamers will be accepted.")
+    argparser.add_argument("--max_rotamers", type=int, default=80, help="maximum number of phi/psi combination that should be returned. Can be increased if not enough fragments are found downstream (e.g. because secondary structure filter was used, and there are not enough phi/psi combinations in the output that fit to the specified secondary structure.")
+    argparser.add_argument("--rotamer_diff_to_best", type=float, default=1, help="Accept rotamers that have a probability not lower than this percentage of the most probable accepted rotamer. 1 means all rotamers will be accepted.")
     argparser.add_argument("--not_flip_symmetric", action="store_true", help="Do not flip tip symmetric residues (ARG, ASP, GLU, LEU, PHE, TYR, VAL).")
     argparser.add_argument("--prob_weight", type=float, default=2, help="Weight for rotamer probability importance when picking rotamers.")
     argparser.add_argument("--occurrence_weight", type=float, default=1, help="Weight for phi/psi-occurrence importance when picking rotamers.")
