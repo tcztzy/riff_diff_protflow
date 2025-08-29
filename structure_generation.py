@@ -31,6 +31,7 @@ from protflow.metrics.ligand import LigandClashes, LigandContacts
 from protflow.metrics.rmsd import BackboneRMSD, MotifRMSD, MotifSeparateSuperpositionRMSD
 import protflow.tools.rosetta
 from protflow.utils.biopython_tools import renumber_pdb_by_residue_mapping, load_structure_from_pdbfile, save_structure_to_pdbfile, get_sequence_from_pose
+from protflow.config import ROSETTA_BIN_PATH
 import protflow.utils.plotting as plots
 
 
@@ -794,8 +795,8 @@ def main(args):
     rog_calculator = GenericMetric(module="protflow.utils.metrics", function="calc_rog_of_pdb", jobstarter=small_cpu_jobstarter)
     tm_score_calculator = protflow.metrics.tmscore.TMalign(jobstarter = small_cpu_jobstarter)
     ligand_mpnn = protflow.tools.ligandmpnn.LigandMPNN(jobstarter = cpu_jobstarter)
-    rosetta = protflow.tools.rosetta.Rosetta(jobstarter = cpu_jobstarter, fail_on_missing_output_poses=True)
-    esmfold = protflow.tools.esmfold.ESMFold(jobstarter = real_gpu_jobstarter) # esmfold does not work on cpu
+    rosetta = protflow.tools.rosetta.Rosetta(jobstarter=cpu_jobstarter, fail_on_missing_output_poses=True)
+    esmfold = protflow.tools.esmfold.ESMFold(jobstarter=real_gpu_jobstarter) # esmfold does not work on cpu
     ligand_rmsd = MotifSeparateSuperpositionRMSD(
         ref_col="updated_reference_frags_location",
         super_target_motif="fixed_residues",
@@ -810,7 +811,9 @@ def main(args):
     if args.attnpacker_repack:
         attnpacker = protflow.tools.attnpacker.AttnPacker(jobstarter=gpu_jobstarter)
 
-
+    if not os.path.isfile(rosetta_scripts_path := os.path.join(ROSETTA_BIN_PATH, args.rosetta_scripts)):
+        raise KeyError(f"Could not find Rosetta scripts executable at {rosetta_scripts_path}! Make sure the right executable for <rosetta_scripts> was set (without path!) and <ROSETTA_BIN_PATH> is set in the ProtFlow config file!")
+    
     # set up general ligandmpnn options
     ligandmpnn_options = f"--ligand_mpnn_use_side_chain_context 1 {args.ligandmpnn_options if args.ligandmpnn_options else ''}"
 
