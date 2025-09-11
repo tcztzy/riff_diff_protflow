@@ -12,7 +12,6 @@ import pandas as pd
 from Bio.PDB import Structure
 
 import protflow
-import protflow.config
 from protflow.jobstarters import SbatchArrayJobstarter
 import protflow.poses
 import protflow.residues
@@ -31,7 +30,7 @@ from protflow.metrics.ligand import LigandClashes, LigandContacts
 from protflow.metrics.rmsd import BackboneRMSD, MotifRMSD, MotifSeparateSuperpositionRMSD
 import protflow.tools.rosetta
 from protflow.utils.biopython_tools import renumber_pdb_by_residue_mapping, load_structure_from_pdbfile, save_structure_to_pdbfile, get_sequence_from_pose
-from protflow.config import ROSETTA_BIN_PATH
+from protflow.config import ROSETTA_BIN_PATH, AUXILIARY_RUNNER_SCRIPTS_DIR
 import protflow.utils.plotting as plots
 
 
@@ -811,15 +810,15 @@ def main(args):
     if args.attnpacker_repack:
         attnpacker = protflow.tools.attnpacker.AttnPacker(jobstarter=gpu_jobstarter)
 
-    if not os.path.isfile(rosetta_scripts_path := os.path.join(ROSETTA_BIN_PATH, args.rosetta_scripts)):
+    if not os.path.isfile(rosetta_scripts_path := os.path.join(ROSETTA_BIN_PATH, args.rosetta_scripts_application)):
         raise KeyError(f"Could not find Rosetta scripts executable at {rosetta_scripts_path}! Make sure the right executable for <rosetta_scripts> was set (without path!) and <ROSETTA_BIN_PATH> is set in the ProtFlow config file!")
-    
+
     # set up general ligandmpnn options
     ligandmpnn_options = f"--ligand_mpnn_use_side_chain_context 1 {args.ligandmpnn_options if args.ligandmpnn_options else ''}"
 
     # set up general rosetta options
     bb_opt_options = f"-parser:protocol {os.path.abspath(os.path.join(args.riff_diff_dir, 'utils', 'fr_constrained.xml'))} -beta -ignore_zero_occupancy false -flip_HNQ true -use_input_sc true -ignore_waters false"
-    fr_options = f"-parser:protocol {os.path.abspath(os.path.join(protflow.config.AUXILIARY_RUNNER_SCRIPTS_DIR, 'fastrelax_sap.xml'))} -beta -ignore_zero_occupancy false -flip_HNQ true -use_input_sc true -ignore_waters false"
+    fr_options = f"-parser:protocol {os.path.abspath(os.path.join(AUXILIARY_RUNNER_SCRIPTS_DIR, 'fastrelax_sap.xml'))} -beta -ignore_zero_occupancy false -flip_HNQ true -use_input_sc true -ignore_waters false"
 
     if params:
         fr_options = fr_options + f" -extra_res_fa {' '.join(params)}"
@@ -1744,20 +1743,20 @@ def main(args):
                 backbones.df[res_col] = [ResidueSelection(motif, from_scorefile=True) for motif in backbones.df[res_col].to_list()]
 
         # calculate rmsds, TMscores and clashes
-        catres_motif_heavy_rmsd.run(poses = backbones, prefix = f"variants_esm_catres_heavy")
-        catres_motif_bb_rmsd.run(poses = backbones, prefix = f"variants_esm_catres_bb")
-        bb_rmsd.run(poses = backbones, ref_col=f"variants_bbopt_location", prefix = f"variants_esm_backbone")
+        catres_motif_heavy_rmsd.run(poses = backbones, prefix = "variants_esm_catres_heavy")
+        catres_motif_bb_rmsd.run(poses = backbones, prefix = "variants_esm_catres_bb")
+        bb_rmsd.run(poses = backbones, ref_col="variants_bbopt_location", prefix = "variants_esm_backbone")
         fragment_motif_bb_rmsd.run(poses = backbones, prefix = "variants_esm_motif")
-        tm_score_calculator.run(poses = backbones, prefix = f"variants_esm_tm", ref_col = f"variants_bbopt_location")
+        tm_score_calculator.run(poses = backbones, prefix = "variants_esm_tm", ref_col = "variants_bbopt_location")
 
-        backbones.filter_poses_by_value(score_col=f"variants_esm_plddt", value=args.ref_plddt_cutoff_end, operator=">=", prefix=f"variants_esm_plddt", plot=True)
-        backbones.filter_poses_by_value(score_col=f"variants_esm_tm_TM_score_ref", value=0.9, operator=">=", prefix=f"variants_esm_TM_score", plot=True)
-        backbones.filter_poses_by_value(score_col=f"variants_esm_catres_bb_rmsd", value=args.ref_catres_bb_rmsd_cutoff_end, operator="<=", prefix=f"variants_esm_catres_bb", plot=True)
+        backbones.filter_poses_by_value(score_col="variants_esm_plddt", value=args.ref_plddt_cutoff_end, operator=">=", prefix="variants_esm_plddt", plot=True)
+        backbones.filter_poses_by_value(score_col="variants_esm_tm_TM_score_ref", value=0.9, operator=">=", prefix="variants_esm_TM_score", plot=True)
+        backbones.filter_poses_by_value(score_col="variants_esm_catres_bb_rmsd", value=args.ref_catres_bb_rmsd_cutoff_end, operator="<=", prefix="variants_esm_catres_bb", plot=True)
 
         # add ligand to poses
         chain_adder.superimpose_add_chain(
             poses = backbones,
-            prefix = f"variants_esm_ligand",
+            prefix = "variants_esm_ligand",
             ref_col = "updated_reference_frags_location",
             target_motif = "fixed_residues",
             copy_chain = "Z"
@@ -1771,7 +1770,7 @@ def main(args):
         backbones.filter_poses_by_value(score_col="variants_esm_lig_contacts", value=args.min_contacts, operator=">=", prefix="variants_esm_lig_contacts", plot=True)
 
         # copy description column for merging with data later
-        backbones.df[f'variants_post_esm_description'] = backbones.df['poses_description']
+        backbones.df['variants_post_esm_description'] = backbones.df['poses_description']
 
         # calculate multi-scoreterm score:
         logging.info("Calculating composite score for post-esm evaluation...")
@@ -1791,7 +1790,7 @@ def main(args):
         layers = 2
 
         # manage screen output
-        backbones.reindex_poses(prefix=f"variants_esm_reindex", remove_layers=layers, force_reindex=True)
+        backbones.reindex_poses(prefix="variants_esm_reindex", remove_layers=layers, force_reindex=True)
 
         # filter down to rfdiffusion backbones
         backbones.filter_poses_by_rank(
@@ -1824,7 +1823,7 @@ def main(args):
         )
 
         # calculate backbone rmsds
-        catres_motif_bb_rmsd.run(poses=backbones, prefix=f"variants_af2_catres_bb")
+        catres_motif_bb_rmsd.run(poses=backbones, prefix="variants_af2_catres_bb")
         bb_rmsd.run(poses=backbones, prefix="variants_af2_backbone", ref_col="variants_bbopt_location")
         bb_rmsd.run(poses=backbones, prefix="variants_af2_ESM_bb", ref_col="variants_esm_location")
         tm_score_calculator.run(poses=backbones, prefix="variants_af2_tm", ref_col="variants_bbopt_location")
@@ -1936,7 +1935,7 @@ if __name__ == "__main__":
     argparser.add_argument("--working_dir", type=str, required=True, help="output directory.")
 
     # general optionals
-    argparser.add_argument("--rosetta_application", type=str, default="rosetta_scripts.cxx11threadserialization.linuxclangrelease", help="Name of the Rosetta scripts applications (not the full path!)")
+    argparser.add_argument("--rosetta_scripts_application", type=str, default="rosetta_scripts.cxx11threadserialization.linuxclangrelease", help="Name of the Rosetta scripts applications (not the full path!)")
     argparser.add_argument("--skip_refinement", action="store_true", help="Skip refinement and evaluation, only run screening.")
     argparser.add_argument("--skip_evaluation", action="store_true", help="Skip evaluation, only run screening and refinement.")
     argparser.add_argument("--params_files", type=str, default=None, help="Path to alternative params file. Can also be multiple paths separated by ','.")
