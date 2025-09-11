@@ -1920,7 +1920,7 @@ def main(args):
         backbones.reindex_poses(prefix="variants_af2_reindex", remove_layers=2 if not args.attnpacker_repack else 3, force_reindex=True)
 
         # filter for unique diffusion backbones
-        backbones.filter_poses_by_rank(n=5, score_col="variants_af2_composite_score", remove_layers=3, plot=True)
+        #backbones.filter_poses_by_rank(n=5, score_col="variants_af2_composite_score", group_col="eval_af2_location", prefix="filter_af2_composite_score_post_reindex", plot=True)
 
         # create output directory
         create_results_dir(poses=backbones, dir=os.path.join(args.working_dir, f"{variants_prefix}variants_results"), score_col="variants_af2_composite_score", plot_cols=variants_af2_scoreterms, rlx_path_col="variants_relaxed_combined_path", create_mutations_csv=True)
