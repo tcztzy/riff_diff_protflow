@@ -1042,7 +1042,7 @@ def main(args):
                 rosetta.run(
                     poses = backbones,
                     prefix = "bbopt",
-                    rosetta_application=args.rosetta_application,
+                    rosetta_application=args.rosetta_scripts_application,
                     nstruct = 1,
                     options = bb_opt_options,
                     pose_options='screen_bbopt_opts'
@@ -1295,7 +1295,7 @@ def main(args):
             rosetta.run(
                 poses = backbones,
                 prefix = f"cycle_{cycle}_bbopt",
-                rosetta_application=args.rosetta_application,
+                rosetta_application=args.rosetta_scripts_application,
                 nstruct = 1,
                 options = bb_opt_options,
                 pose_options=f'cycle_{cycle}_bbopt_opts'
@@ -1568,7 +1568,7 @@ def main(args):
         rosetta.run(
             poses = rlx_poses,
             prefix = "eval_af2_fastrelax",
-            rosetta_application=args.rosetta_application,
+            rosetta_application=args.rosetta_scripts_application,
             nstruct = 15,
             options = fr_options
         )
@@ -1669,7 +1669,7 @@ def main(args):
         rosetta.run(
             poses = backbones,
             prefix = "variants_bbopt",
-            rosetta_application=args.rosetta_application,
+            rosetta_application=args.rosetta_scripts_application,
             nstruct = 1,
             options = bb_opt_options,
             pose_options='variants_bbopt_opts'
@@ -1692,7 +1692,7 @@ def main(args):
                 rosetta.run(
                     poses=backbones,
                     prefix="coupled_moves",
-                    rosetta_application=args.rosetta_application,
+                    rosetta_application=args.rosetta_scripts_application,
                     nstruct=50,
                     options=cm_options,
                     pose_options="cm_pose_opts")
@@ -1879,7 +1879,7 @@ def main(args):
         rosetta.run(
             poses = rlx_poses,
             prefix = "variants_af2_fastrelax",
-            rosetta_application=args.rosetta_application,
+            rosetta_application=args.rosetta_scripts_application,
             nstruct = 15,
             options = fr_options
         )
