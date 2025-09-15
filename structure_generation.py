@@ -492,7 +492,7 @@ def create_mutation_resfiles(omitted_aas:str, allowed_aas:str, name:str, dir:str
     mutations = omitted + allowed
     mutations = sorted(mutations, key=lambda x: int(x.split()[0]))
     filename = os.path.join(dir, f"{name}.resfile")
-    resfile = "start\n" + "\n".join(mutations)
+    resfile = "AUTO\nstart\n" + "\n".join(mutations)
     with open(filename, "w") as out:
         out.write(resfile)
     return filename
