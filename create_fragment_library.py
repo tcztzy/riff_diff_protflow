@@ -1520,13 +1520,110 @@ def create_pdbs(df:pd.DataFrame, output_dir, ligand, channel_path, preserve_chan
         if channel_path and preserve_channel_coordinates:
             model.add(load_structure_from_pdbfile(channel_path)["Q"])
         elif channel_path:
-            model = add_placeholder_to_pose(model, polyala_path=channel_path, polyala_chain="Q", ligand_chain='Z')
+            model = add_placeholder_to_pose(model, channel_path=channel_path, channel_chain="Q", ligand_chain='Z')
         save_structure_to_pdbfile(struct, filename)
         filenames.append(filename)
     return filenames
 
+def fit_line_helix_centroids(points, window=4, trim_ends=0, outlier_z=2.5):
+    """
+    Helix-aware axis fit using sliding-window centroids (e.g., i..i+3 Cα).
+    Returns:
+      c : centroid on axis
+      v : unit direction vector (N→C oriented)
+      (s_min, s_max) : projection range of the ORIGINAL points along v
+      r_est : RMS radial distance of ORIGINAL points to axis
+    Args:
+      points     : (N,3) array (ideally Cα atoms ordered from N to C)
+      window     : sliding window length for centroids (4 is classic for α-helix)
+      trim_ends  : optional number of residues to drop from each end before centroiding
+      outlier_z  : remove centroid outliers farther than z * MAD from preliminary line
+    """
+    P = np.asarray(points, dtype=float)
+    if P.ndim != 2 or P.shape[1] != 3 or P.shape[0] < max(5, window+1):
+        # fallback to your PCA if not enough points
+        return fit_line_pca(P)
 
-def add_placeholder_to_pose(pose: Structure, polyala_path:str, polyala_chain:str="Q", ligand_chain:str="Z", ignore_atoms:"list[str]"="H") -> Structure:
+    # 0) optionally trim ragged ends before centroiding
+    if trim_ends > 0:
+        P_used = P[trim_ends: -trim_ends]
+        if P_used.shape[0] < window+1:
+            P_used = P  # not enough points to trim
+    else:
+        P_used = P
+
+    # 1) sliding-window centroids (i..i+window-1)
+    M = P_used.shape[0] - window + 1
+    C = np.empty((M, 3), dtype=float)
+    for i in range(M):
+        C[i] = P_used[i:i+window].mean(axis=0)
+
+    # 2) preliminary line from centroids via PCA
+    Cc = C - C.mean(axis=0)
+    _, _, Vt = np.linalg.svd(Cc, full_matrices=False)
+    v0 = Vt[0]; v0 /= np.linalg.norm(v0)
+    c0 = C.mean(axis=0)
+
+    # 3) robust pass: remove centroid outliers (radial distance from preliminary line)
+    #    distance to line through c0 with direction v0
+    t = (C - c0) @ v0
+    C_proj = c0 + np.outer(t, v0)
+    resid = np.linalg.norm(C - C_proj, axis=1)
+    med = np.median(resid)
+    mad = np.median(np.abs(resid - med)) + 1e-9  # robust scale
+    keep = resid <= (med + outlier_z * 1.4826 * mad)  # 1.4826 ≈ MAD→σ for Gauss
+
+    if keep.sum() >= max(3, window):  # refit if we actually kept enough points
+        Ck = C[keep]
+        Ckc = Ck - Ck.mean(axis=0)
+        _, _, Vt2 = np.linalg.svd(Ckc, full_matrices=False)
+        v = Vt2[0]; v /= np.linalg.norm(v)
+        c = Ck.mean(axis=0)
+    else:
+        v, c = v0, c0
+
+    # 4) Orient axis N→C using original endpoints
+    if ((P[-1] - P[0]) @ v) < 0:
+        v = -v
+
+    # 5) Project ORIGINAL points to get span and radius estimate
+    X = P - c
+    s_vals = X @ v
+
+    s_first = float(s_vals[0])       # projection coordinate of N-terminal Cα
+    p_first_proj = c + s_first * v   # 3D coords of projected first Cα
+
+
+    return c, v, p_first_proj
+
+def fit_line_pca(points):
+    """
+    Fit a 3D line (axis) through a set of coordinates using PCA (SVD).
+    Returns:
+      c      = centroid (a point on the axis)
+      v      = unit direction vector along the helix axis
+      (s_min, s_max) = scalar range of projections of the points along v
+      r_est  = RMS radial distance of points to the fitted axis (≈ helix radius)
+    """
+    P = np.asarray(points, dtype=float)        # ensure input is a NumPy float array of shape (N,3)
+    c = P.mean(axis=0)                         # compute centroid of all points
+    X = P - c                                  # center the data around the centroid
+    U, S, Vt = np.linalg.svd(X, full_matrices=False)  
+    # perform SVD; right-singular vectors in Vt are principal directions
+    
+    v = Vt[0]                                  # take the first principal component (direction of max variance)
+    v = v / np.linalg.norm(v)                  # normalize to unit vector
+    
+    s_vals = X @ v                             # project all centered points onto axis → scalar coords
+    
+    s_first = float(s_vals[0])       # projection coordinate of N-terminal Cα
+    p_first_proj = c + s_first * v   # 3D coords of projected first Cα
+
+
+    
+    return c, v, p_first_proj         # return centroid, direction, span, and estimated radius
+
+def add_placeholder_to_pose(pose: Structure, channel_path:str, channel_chain:str="Q", ligand_chain:str="Z", ignore_atoms:"list[str]"="H") -> Structure:
     '''
     add channel placehoder to pose
     '''
@@ -1534,12 +1631,9 @@ def add_placeholder_to_pose(pose: Structure, polyala_path:str, polyala_chain:str
         ignore_atoms = [ignore_atoms]
 
     # load polyala:
-    polyala = load_structure_from_pdbfile(polyala_path)
+    channel = load_structure_from_pdbfile(channel_path)
 
-    # determine polyala chain name (only first chain will be considered)
-    pa_chain = [x.id for x in polyala.get_chains()][0]
-
-    pa_atoms = [atom for atom in polyala.get_atoms() if atom.name not in ignore_atoms]
+    channel_atoms = [atom for atom in channel.get_atoms() if atom.name not in ignore_atoms]
 
 
     frag_protein_atoms, frag_ligand_atoms = get_protein_and_ligand_atoms(pose, ligand_chain=ligand_chain, ignore_atoms=ignore_atoms)
@@ -1550,23 +1644,22 @@ def add_placeholder_to_pose(pose: Structure, polyala_path:str, polyala_chain:str
     vector_fragment = frag_ligand_centroid - frag_protein_centroid
 
     # calculate vector between CA of first and last residue of polyala
-    polyala_ca = [atom.get_coord() for atom in pa_atoms if atom.id == "CA"]
-    ca1, ca2 = polyala_ca[0], polyala_ca[-1]
-    vector_polyala = ca2 - ca1
+    channel_ca = [atom.get_coord() for atom in channel_atoms if atom.id == "CA"]
+
+    channel_centroid, channel_vector, projected_Nterm = fit_line_helix_centroids(channel_ca)
 
     # calculate rotation between vectors
-    r = Bio.PDB.rotmat(Bio.PDB.Vector(vector_polyala), Bio.PDB.Vector(vector_fragment))
+    r = Bio.PDB.rotmat(Bio.PDB.Vector(channel_vector), Bio.PDB.Vector(vector_fragment))
 
     # rotate polyala and translate into motif
-    polyala_rotated = apply_rotation_to_pose(polyala, ca1, r)
-    polyala_translated = apply_translation_to_pose(polyala_rotated, frag_ligand_centroid - ca1)
+    polyala_rotated = apply_rotation_to_pose(channel, projected_Nterm, r)
+    polyala_translated = apply_translation_to_pose(polyala_rotated, frag_ligand_centroid - projected_Nterm)
 
     # change chain id of polyala and add into pose:
-    if polyala_chain in [chain.id for chain in pose.get_chains()]:
-        raise KeyError(f"Chain {polyala_chain} already found in pose. Try other chain name!")
-    if pa_chain != polyala_chain:
-        polyala_translated[pa_chain].id = polyala_chain
-    pose.add(polyala_translated[polyala_chain])
+    if channel_chain in [chain.id for chain in pose.get_chains()]:
+        raise KeyError(f"Chain {channel_chain} already found in pose. Try other chain name!")
+
+    pose.add(polyala_translated[channel_chain])
     return pose
 
 def apply_rotation_to_pose(pose: Structure, origin: "list[float]", r: "list[list[float]]") -> Structure:
