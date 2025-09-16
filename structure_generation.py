@@ -754,7 +754,7 @@ def main(args):
 
     # check params files
     if args.params_files:
-        params = args.params.split(",")
+        params = args.params_files.split(",")
     elif "params_path" in backbones.df.columns:
         params = backbones.df["params_path"].unique()
         if len(params) > 1:
