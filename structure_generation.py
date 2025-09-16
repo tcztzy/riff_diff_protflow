@@ -1845,7 +1845,7 @@ def main(args):
         if args.attnpacker_repack:
             attnpacker.run(
                 poses=backbones,
-                prefix=f"eval_af2_packing"
+                prefix=f"variants_af2_packing"
             )
 
         # calculate sc rmsd
