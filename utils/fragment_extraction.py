@@ -25,7 +25,7 @@ def assign_frag_identifier(df, pos):
     # Function to create the identifier for each frag_num group
     def make_identifier(group):
         dihedral_seq = tuple(zip(group['phi_rounded'], group['psi_rounded'], group['omega_rounded']))  # preserve order
-        rotamer = group['rotamer_index'].iloc[0]
+        rotamer = int(group['rotamer_index'].iloc[0])
         return (dihedral_seq, rotamer, pos)
 
     # Apply group-wise identifier creation
@@ -108,9 +108,12 @@ def main(args):
         # merge back with all residues from fragments
         frags_df = valid_groups.merge(valid_groups_merge, on="frag_num")
 
-        # set non-rotamer positions to 0
+        # set non-rotamer positions to None
         frags_df.loc[frags_df['residue_numbers'] != pos, 'probability'] = None
         frags_df.loc[frags_df['residue_numbers'] != pos, 'phi_psi_occurrence'] = None
+        for chi_angle in [col for col in frags_df.columns if col.startswith("chi")]:
+            frags_df.loc[frags_df['residue_numbers'] != pos, chi_angle] = None
+
 
         # define rotamer position
         frags_df['rotamer_pos'] = pos
